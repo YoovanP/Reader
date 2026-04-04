@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ReadRot</title>
+  <link rel="icon" href="data:,">
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --text: #e8e2d9;
+      --text-muted: #888;
+      --accent: #c8a96e;
+      --danger: #e05c4b;
+      --border: #2a2a2a;
+      --reading-width: 680px;
+      --font-body: 'Lora', Georgia, serif;
+      --font-heading: 'Playfair Display', serif;
+      --font-ui: 'JetBrains Mono', monospace;
+      --radius: 4px;
+      --transition: 150ms ease;
+      --font-size: 18px;
+      --line-height: 1.8;
+      --font-color: #e8e2d9;
+      --reader-bg: transparent;
+      --letter-spacing: 0px;
+      --paragraph-spacing: 1rem;
+    }
+
+    body.light {
+      --bg: #f5f0e8;
+      --surface: #fffdf8;
+      --text: #1a1a1a;
+      --font-color: #1a1a1a;
+      --border: #ddd;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      transition: background var(--transition), color var(--transition);
+    }
+
+    body.hide-toolbar #toolbar {
+      display: none;
+    }
+
+    #restore-toolbar-btn {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 120;
+      display: none;
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    body.hide-toolbar #restore-toolbar-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    #app {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+
+    #sidebar {
+      width: 320px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: none;
+      flex-direction: column;
+      overflow-y: auto;
+      padding-bottom: 1rem;
+      z-index: 30;
+    }
+
+    #sidebar.visible {
+      display: flex;
+    }
+
+    .panel {
+      border-bottom: 1px solid var(--border);
+      padding: 1rem;
+    }
+
+    .panel h3 {
+      margin: 0 0 0.75rem 0;
+      font-family: var(--font-ui);
+      font-size: 0.95rem;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .setting-row {
+      display: grid;
+      gap: 0.35rem;
+      margin-bottom: 0.9rem;
+      font-size: 0.85rem;
+    }
+
+    .setting-row.inline {
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      position: relative;
+    }
+
+    #toolbar {
+      min-height: 56px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--surface);
+      padding: 0.45rem 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    #load-indicator {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      min-width: 120px;
+      text-align: right;
+    }
+
+    .logo {
+      font-weight: 700;
+      color: var(--accent);
+      margin-right: 0.4rem;
+    }
+
+    .spacer {
+      flex: 1;
+    }
+
+    button,
+    select,
+    input,
+    textarea {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--font-ui);
+      padding: 0.35rem 0.5rem;
+      border-radius: var(--radius);
+    }
+
+    input[type='range'] {
+      width: 100%;
+      accent-color: var(--accent);
+      padding: 0;
+      border: none;
+      background: transparent;
+    }
+
+    input[type='checkbox'] {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+
+    button {
+      cursor: pointer;
+      transition: border-color var(--transition), color var(--transition), background var(--transition);
+    }
+
+    button:hover,
+    button.active {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    select,
+    select option {
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    #reader-area {
+      flex: 1;
+      position: relative;
+      overflow: auto;
+      background: var(--bg);
+    }
+
+    #drop-zone {
+      position: absolute;
+      inset: 1rem;
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      text-align: center;
+      transition: border-color var(--transition), background var(--transition);
+      padding: 1rem;
+      z-index: 10;
+    }
+
+    #drop-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(200, 169, 110, 0.07);
+    }
+
+    #classic-reader {
+      max-width: var(--reading-width);
+      margin: 0 auto;
+      padding: 2rem 1rem 4rem;
+      font-family: var(--font-body);
+      font-size: var(--font-size);
+      line-height: var(--line-height);
+      color: var(--font-color);
+      letter-spacing: var(--letter-spacing);
+      background: var(--reader-bg);
+      display: none;
+      transition: opacity var(--transition);
+    }
+
+    #classic-reader h1,
+    #classic-reader h2,
+    #classic-reader h3 {
+      font-family: var(--font-heading);
+    }
+
+    #classic-reader p {
+      margin: 0 0 var(--paragraph-spacing) 0;
+    }
+
+    #classic-reader.horizontal {
+      max-width: none;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      display: flex;
+      scroll-snap-type: x mandatory;
+    }
+
+    #classic-reader.horizontal.rtl {
+      direction: rtl;
+      flex-direction: row-reverse;
+    }
+
+    #classic-reader .chapter-panel {
+      min-width: 100%;
+      height: 100%;
+      overflow-y: auto;
+      padding: 2rem 1rem 4rem;
+      scroll-snap-align: start;
+    }
+
+    .chapter-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 2rem 0;
+    }
+
+    #rsvp-reader {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-body);
+      font-size: clamp(2rem, 8vw, 4rem);
+      background: var(--reader-bg);
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .rsvp-word-pulse {
+      transform: scale(1.05);
+      transition: transform 50ms;
+    }
+
+    .orp {
+      color: var(--accent);
+    }
+
+    #rsvp-controls,
+    #rot-controls {
+      display: none;
+      padding: 0.85rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      gap: 0.6rem;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    #rsvp-status {
+      min-width: 180px;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .rot-pill.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(200, 169, 110, 0.08);
+    }
+
+    #progress-bar-container {
+      height: 4px;
+      background: var(--surface);
+      width: 100%;
+      flex-shrink: 0;
+    }
+
+    #progress-bar {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.2s;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .toc-item {
+      width: 100%;
+      text-align: left;
+      margin-bottom: 0.4rem;
+      font-size: 0.82rem;
+    }
+
+    #mobile-menu-btn {
+      display: none;
+    }
+
+    .row-group {
+      display: grid;
+      gap: 0.4rem;
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    }
+
+    @media (max-width: 900px) {
+      #sidebar {
+        position: absolute;
+        height: 100%;
+        left: 0;
+        top: 0;
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
+        width: min(90vw, 340px);
+      }
+
+      #mobile-menu-btn {
+        display: inline-flex;
+      }
+
+      #toolbar {
+        gap: 0.35rem;
+        padding: 0.45rem;
+      }
+
+      #toolbar button,
+      #toolbar select {
+        font-size: 0.75rem;
+      }
+
+      .logo {
+        width: 100%;
+        margin: 0 0 0.35rem 0;
+      }
+
+      #classic-reader {
+        padding: 1.2rem 0.8rem 3.2rem;
+      }
+
+      #rsvp-controls,
+      #rot-controls {
+        justify-content: flex-start;
+        padding: 0.7rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar" aria-label="Sidebar">
+      <section class="panel toc-panel" id="toc-panel">
+        <h3>Table of Contents</h3>
+        <div id="toc-list"></div>
+      </section>
+
+      <section class="panel settings-panel" id="settings-panel">
+        <h3>Reader Settings</h3>
+
+        <div class="setting-row inline">
+          <label for="theme-select">Theme</label>
+          <select id="theme-select">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+
+        <div class="setting-row inline">
+          <label for="font-family">Reading Font</label>
+          <select id="font-family">
+            <option value="Lora">Lora</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Times New Roman">Times New Roman</option>
+            <option value="system-ui">System UI</option>
+            <option value="JetBrains Mono">JetBrains Mono</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+          <label for="font-size">Font Size</label>
+          <input type="range" id="font-size" min="12" max="36" value="18">
+        </div>
+
+        <div class="setting-row">
+          <label for="line-height">Line Height</label>
+          <input type="range" id="line-height" min="1.2" max="2.8" step="0.1" value="1.8">
+        </div>
+
+        <div class="setting-row">
+          <label for="reading-width">Reading Width</label>
+          <input type="range" id="reading-width" min="460" max="1100" step="20" value="680">
+        </div>
+
+        <div class="setting-row">
+          <label for="letter-spacing">Letter Spacing</label>
+          <input type="range" id="letter-spacing" min="-0.5" max="3" step="0.1" value="0">
+        </div>
+
+        <div class="setting-row">
+          <label for="paragraph-spacing">Paragraph Spacing</label>
+          <input type="range" id="paragraph-spacing" min="0.3" max="2.5" step="0.1" value="1">
+        </div>
+
+        <div class="setting-row">
+          <label for="font-color">Font Color</label>
+          <input type="color" id="font-color" value="#e8e2d9">
+        </div>
+
+        <div class="setting-row">
+          <label for="bg-color">Reader Background</label>
+          <input type="color" id="bg-color" value="#000000">
+        </div>
+
+        <div class="setting-row">
+          <label for="accent-color">Accent Color</label>
+          <input type="color" id="accent-color" value="#c8a96e">
+        </div>
+
+        <div class="setting-row inline">
+          <label for="traversal-mode">Traversal</label>
+          <select id="traversal-mode">
+            <option value="scroll">Scrolling</option>
+            <option value="ltr">Left to Right</option>
+            <option value="rtl">Right to Left</option>
+          </select>
+        </div>
+
+        <div class="setting-row inline">
+          <label for="chapter-mode">Chapter Handling</label>
+          <select id="chapter-mode">
+            <option value="divided">Divided</option>
+            <option value="continuous">Continuous</option>
+          </select>
+        </div>
+
+        <div class="setting-row inline">
+          <label for="hide-toolbar-setting">Hide Top Bar</label>
+          <input type="checkbox" id="hide-toolbar-setting">
+        </div>
+
+        <div class="row-group">
+          <button id="apply-settings-btn">Apply Settings</button>
+          <button id="reset-style-btn">Reset Style</button>
+          <button id="fullscreen-btn-setting">Fullscreen</button>
+        </div>
+      </section>
+
+      <section class="panel" id="keys-section">
+        <h3>API Keys (BYOK)</h3>
+        <p style="margin-top:0; font-size:0.8rem; color:var(--text-muted);">Stored only in your browser and sent only to the selected provider endpoint.</p>
+
+        <div class="setting-row">
+          <label for="provider-select">Provider</label>
+          <select id="provider-select">
+            <option value="gemini">Gemini</option>
+            <option value="openai">OpenAI</option>
+              <option value="openrouter">OpenRouter</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+            <label for="provider-key" id="provider-key-label">Gemini Key</label>
+            <input type="password" id="provider-key" placeholder="AIza...">
+        </div>
+
+        <div class="setting-row inline">
+          <label for="persist-keys">Persist to localStorage</label>
+          <input type="checkbox" id="persist-keys">
+        </div>
+
+        <div class="row-group">
+          <button id="save-keys">Save Keys</button>
+          <button id="remove-keys">Remove Keys</button>
+        </div>
+      </section>
+    </aside>
+
+    <main id="main">
+      <header id="toolbar">
+        <button id="mobile-menu-btn" title="Open settings">Menu</button>
+        <div class="logo">ReadRot</div>
+
+        <select class="mode-switcher" id="mode-switcher" title="Reader mode">
+          <option value="classic">Classic</option>
+          <option value="rsvp">Speed</option>
+          <option value="rot">ROT</option>
+        </select>
+
+        <button id="prev-chapter" title="Previous chapter">Prev</button>
+        <span id="chapter-indicator" style="min-width:140px; text-align:center; font-size:0.8rem; color:var(--text-muted);">No chapter</span>
+        <button id="next-chapter" title="Next chapter">Next</button>
+
+        <input type="file" id="upload-btn" accept=".pdf,.epub,.txt,.md,.markdown,.mobi,.azw,.azw3,.rtf,.html,.htm,.xml,.json,.log,.csv" style="display:none">
+        <button id="upload-trigger">Upload</button>
+        <button id="settings-btn">Settings</button>
+
+        <select id="ai-btn" class="ai-btn hidden" title="Slopify">
+          <option value="">Slopify</option>
+          <option value="simplify">Simplify</option>
+          <option value="summarize">Summarize</option>
+          <option value="casualize">Casualize</option>
+          <option value="rotify">Rotify</option>
+        </select>
+
+        <div class="spacer"></div>
+
+        <button id="hide-toolbar-btn" title="Toggle top bar visibility">Hide Bar</button>
+        <button id="fullscreen-btn" title="Toggle fullscreen">Fullscreen</button>
+        <span id="load-indicator" class="hidden">Loading...</span>
+      </header>
+
+      <section id="reader-area">
+        <div id="drop-zone">
+          <h2 style="font-family:var(--font-heading); margin-bottom:0.25rem;">Drop a book file</h2>
+          <p style="margin:0.2rem 0; color:var(--text-muted);">PDF, EPUB, TXT, MD, MOBI, AZW, RTF, HTML, XML, CSV, JSON and more.</p>
+          <p style="margin:0.4rem 0 0; color:var(--text-muted);">Or click Upload in the toolbar.</p>
+        </div>
+
+        <article id="classic-reader"></article>
+        <div id="rsvp-reader"><span id="rsvp-word"></span></div>
+      </section>
+
+      <section id="rsvp-controls">
+        <span id="rsvp-status">0 / 0 - 0 min left</span>
+        <button id="rsvp-skip-back">-10</button>
+        <button id="rsvp-play">Play</button>
+        <button id="rsvp-skip-fwd">+10</button>
+        <input type="range" id="rsvp-wpm" min="100" max="800" step="25" value="300">
+        <span id="rsvp-wpm-label">300 WPM</span>
+      </section>
+
+      <section id="rot-controls">
+        <button class="rot-pill" data-transform="skibidi">Skibidi</button>
+        <button class="rot-pill" data-transform="emoji">Emoji</button>
+        <button class="rot-pill" data-transform="caps">CAPS</button>
+        <button class="rot-pill" data-transform="abbrev">Abbrevs</button>
+        <button class="rot-pill" data-transform="enders">Sign-offs</button>
+        <button class="rot-pill" data-transform="glitch">Glitch</button>
+        <input type="range" id="rot-intensity" min="0" max="100" value="50">
+        <span id="rot-label">Terminal Brainrot</span>
+        <button id="rot-apply">Apply ROT</button>
+        <button id="rot-restore">Restore</button>
+      </section>
+
+      <div id="progress-bar-container">
+        <div id="progress-bar"></div>
+      </div>
+    </main>
+  </div>
+
+  <button id="restore-toolbar-btn" title="Show top bar">Show Top Bar</button>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
