@@ -434,9 +434,11 @@ function getChapterHTML(index, includeHeading = true) {
     return '';
   }
 
+  const canonicalSource = chapter.originalContent || chapter.content || '';
+
   const source = (AppState.mode === 'rot' && AppState.rot.active)
-    ? applyROTTransforms(chapter.originalContent || chapter.content || '', AppState.rot.intensity, AppState.rot.transforms)
-    : (chapter.content || '');
+    ? applyROTTransforms(canonicalSource, AppState.rot.intensity, AppState.rot.transforms)
+    : canonicalSource;
 
   if (!includeHeading) {
     return source;
