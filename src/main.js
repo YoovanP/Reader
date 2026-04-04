@@ -167,7 +167,27 @@ function bindFileInput() {
 
 function bindDropZone() {
   const dropZone = document.getElementById('drop-zone');
+  const uploadInput = document.getElementById('upload-btn');
   let dragDepth = 0;
+
+  const openFilePicker = () => {
+    uploadInput?.click();
+  };
+
+  dropZone.addEventListener('click', (e) => {
+    const interactive = e.target.closest('a, button, input, select, textarea');
+    if (interactive) {
+      return;
+    }
+    openFilePicker();
+  });
+
+  dropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openFilePicker();
+    }
+  });
 
   const hasFiles = (event) => {
     const types = Array.from(event.dataTransfer?.types || []);
