@@ -143,7 +143,11 @@ export function applySettingsToDOM() {
   const root = document.documentElement;
   root.style.setProperty('--font-size', AppState.settings.fontSize + 'px');
   root.style.setProperty('--line-height', AppState.settings.lineHeight);
+  root.style.setProperty('--font-main', `'${AppState.settings.fontFamily}', Georgia, serif`);
+  // Compatibility aliases for older style hooks.
   root.style.setProperty('--font-body', `'${AppState.settings.fontFamily}', Georgia, serif`);
+  root.style.setProperty('--font-heading', `'${AppState.settings.fontFamily}', Georgia, serif`);
+  root.style.setProperty('--font-ui', `'${AppState.settings.fontFamily}', Georgia, serif`);
   root.style.setProperty('--font-color', AppState.settings.fontColor);
   root.style.setProperty('--reader-bg', AppState.settings.readerBg);
   root.style.setProperty('--accent', AppState.settings.accentColor);

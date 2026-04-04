@@ -412,7 +412,7 @@ async function handleFile(file) {
     dropZone.classList.remove('hidden');
     dropZone.classList.remove('dragover');
     dropZone.innerHTML = `
-      <h2 style="font-family:var(--font-heading); margin-bottom:0.25rem;">Could not open this file</h2>
+      <h2 style="font-family:var(--font-main); margin-bottom:0.25rem;">Could not open this file</h2>
       <p style="margin:0.2rem 0; color:var(--text-muted);">Try another EPUB or export to PDF/TXT and re-import.</p>
       <p style="margin:0.4rem 0 0; color:var(--text-muted);">Technical detail: parser failed for ${file.name}</p>
     `;

@@ -21,9 +21,7 @@
       --danger: #e05c4b;
       --border: #2a2a2a;
       --reading-width: 680px;
-      --font-body: 'Lora', Georgia, serif;
-      --font-heading: 'Playfair Display', serif;
-      --font-ui: 'JetBrains Mono', monospace;
+      --font-main: 'Lora', Georgia, serif;
       --radius: 4px;
       --transition: 150ms ease;
       --font-size: 18px;
@@ -51,7 +49,7 @@
       padding: 0;
       background: var(--bg);
       color: var(--text);
-      font-family: var(--font-ui);
+      font-family: var(--font-main);
       display: flex;
       height: 100vh;
       overflow: hidden;
@@ -110,7 +108,7 @@
 
     .panel h3 {
       margin: 0 0 0.75rem 0;
-      font-family: var(--font-ui);
+      font-family: var(--font-main);
       font-size: 0.95rem;
       letter-spacing: 0.03em;
       text-transform: uppercase;
@@ -173,7 +171,7 @@
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--text);
-      font-family: var(--font-ui);
+      font-family: var(--font-main);
       padding: 0.35rem 0.5rem;
       border-radius: var(--radius);
       min-height: 34px;
@@ -252,7 +250,7 @@
       max-width: var(--reading-width);
       margin: 0 auto;
       padding: 2rem 1rem 4rem;
-      font-family: var(--font-body);
+      font-family: var(--font-main);
       font-size: var(--font-size);
       line-height: var(--line-height);
       color: var(--font-color);
@@ -265,7 +263,7 @@
     #classic-reader h1,
     #classic-reader h2,
     #classic-reader h3 {
-      font-family: var(--font-heading);
+      font-family: var(--font-main);
     }
 
     #classic-reader p {
@@ -309,11 +307,31 @@
       display: none;
       align-items: center;
       justify-content: center;
-      font-family: var(--font-body);
+      font-family: var(--font-main);
       font-size: clamp(2rem, 8vw, 4rem);
       background: var(--reader-bg);
       padding: 1rem;
       text-align: center;
+    }
+
+    #rsvp-word {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: baseline;
+      width: min(92vw, 20ch);
+      white-space: nowrap;
+    }
+
+    .rsvp-left {
+      text-align: right;
+      padding-right: 0.06em;
+      overflow: hidden;
+    }
+
+    .rsvp-right {
+      text-align: left;
+      padding-left: 0.06em;
+      overflow: hidden;
     }
 
     .rsvp-word-pulse {
@@ -619,7 +637,7 @@
 
       <section id="reader-area">
         <div id="drop-zone" role="button" tabindex="0" aria-label="Tap to choose a file">
-          <h2 style="font-family:var(--font-heading); margin-bottom:0.25rem;">Drop a book file</h2>
+          <h2 style="font-family:var(--font-main); margin-bottom:0.25rem;">Drop a book file</h2>
           <p style="margin:0.2rem 0; color:var(--text-muted);">PDF, EPUB, TXT, MD, MOBI, AZW, RTF, HTML, XML, CSV, JSON and more.</p>
           <p style="margin:0.4rem 0 0; color:var(--text-muted);">Or click Upload in the toolbar.</p>
         </div>

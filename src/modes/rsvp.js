@@ -13,6 +13,15 @@ function tokenize(text) {
     .filter(Boolean);
 }
 
+function escapeHTML(value) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 class RSVPEngine {
   constructor(text, wpm = 300, onWord) {
     this.words = tokenize(stripHTML(text));
@@ -83,7 +92,7 @@ function renderWord(word, index, total) {
   const orp = safeWord[orpIndex] || '';
   const w2 = safeWord.slice(orpIndex + 1);
 
-  wordEl.innerHTML = `${w1}<span class="orp">${orp}</span>${w2}`;
+  wordEl.innerHTML = `<span class="rsvp-left">${escapeHTML(w1)}</span><span class="orp">${escapeHTML(orp)}</span><span class="rsvp-right">${escapeHTML(w2)}</span>`;
   wordEl.classList.remove('rsvp-word-pulse');
   void wordEl.offsetWidth;
   wordEl.classList.add('rsvp-word-pulse');
