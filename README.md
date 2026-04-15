@@ -9,7 +9,7 @@ It runs fully in the browser with no backend.
 ## What it does
 
 - Upload and read: PDF, EPUB, TXT, MD, HTML, XML, JSON, CSV, RTF, and more
-- Reading modes: Classic, Speed (RSVP), ROT
+- Reading modes: Classic, Bionic, Speed (RSVP), ROT
 - Reader controls: typography, colors, width, spacing, traversal, chapter mode
 - Progress tracking: chapter and reading position persistence
 - Keyboard shortcuts for playback and navigation

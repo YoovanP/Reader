@@ -7,6 +7,9 @@ import {
   saveReaderState,
   saveSettings,
   setChapterScroll,
+  clearResources,
+  addToHistory,
+  clearHistory,
 } from './utils/storage.js';
 import { parsePDF } from './parser/pdf.js';
 import { parseEPUB } from './parser/epub.js';
@@ -21,8 +24,10 @@ import {
   togglePlayPause,
 } from './modes/rsvp.js';
 import { applyROTTransforms, initROTMode } from './modes/rot.js';
+import { applyBionicFormatting } from './modes/bionic.js';
 import { initSettings } from './ui/settings.js';
 import { handleSlopify } from './ai/slopify.js';
+import { SourceManager } from './sources/manager.js';
 
 function setLoadIndicator(text = '', visible = false) {
   const el = document.getElementById('load-indicator');
@@ -75,6 +80,10 @@ document.addEventListener('DOMContentLoaded', () => {
   bindDropZone();
   bindKeyboardShortcuts();
   bindScrollProgress();
+  bindSearchHub();
+  bindIntralinks();
+  bindPasteHub();
+  bindHistoryHub();
 
   const modeSwitcher = document.getElementById('mode-switcher');
   modeSwitcher.addEventListener('change', (e) => {
@@ -154,6 +163,253 @@ function bindToolbar() {
       }
     },
   );
+}
+
+function bindPasteHub() {
+  // ... existing code ...
+}
+
+function bindHistoryHub() {
+  const trigger = document.getElementById('history-trigger');
+  const overlay = document.getElementById('history-overlay');
+  const closeBtn = document.getElementById('close-history-btn');
+  const clearBtn = document.getElementById('clear-history-btn');
+
+  trigger.addEventListener('click', () => {
+    renderHistory();
+    overlay.classList.add('visible');
+  });
+
+  closeBtn.addEventListener('click', () => {
+    overlay.classList.remove('visible');
+  });
+
+  clearBtn.addEventListener('click', () => {
+    if (confirm('Are you sure you want to clear your reading history?')) {
+      clearHistory();
+      renderHistory();
+    }
+  });
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.classList.remove('visible');
+  });
+}
+
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  const count = document.getElementById('history-count');
+  const items = AppState.history || [];
+
+  count.textContent = `${items.length} items`;
+
+  if (items.length === 0) {
+    list.innerHTML = '<div class="empty-history">Your reading history is empty.</div>';
+    return;
+  }
+
+  list.innerHTML = items.map((item, idx) => {
+    const date = new Date(item.lastRead).toLocaleDateString(undefined, {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+    const badgeClass = item.type === 'paste' ? 'badge-paste' : 'badge-file';
+    
+    return `
+      <div class="history-item" data-index="${idx}">
+        <div class="history-item-info">
+          <div class="history-item-title">${item.title}</div>
+          <div class="history-item-meta">
+            <span class="history-badge ${badgeClass}">${item.type}</span>
+            <span>${date}</span>
+            <span>Ch. ${item.chapter + 1}</span>
+          </div>
+        </div>
+        <div style="font-size:0.8rem; color:var(--accent);">Resume →</div>
+      </div>
+    `;
+  }).join('');
+
+  // Add click listeners to items
+  list.querySelectorAll('.history-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.index);
+      const item = AppState.history[idx];
+      resumeFromHistory(item);
+      document.getElementById('history-overlay').classList.remove('visible');
+    });
+  });
+}
+
+async function resumeFromHistory(item) {
+  if (item.type === 'paste' && item.content) {
+    handlePastedText(item.content, item.title, true);
+    // Restore progress after loading
+    setTimeout(() => {
+      AppState.currentChapter = item.chapter || 0;
+      renderClassicReader();
+    }, 100);
+  } else {
+    // For files, we notify the user to upload
+    setLoadIndicator(`History: Please re-upload "${item.title}" to resume...`, true);
+    // Store the desired progress in state so handleFile can pick it up
+    AppState.resumeTarget = {
+      title: item.title,
+      chapter: item.chapter,
+      scrollTop: item.scrollTop
+    };
+  }
+}
+
+function bindSearchHub() {
+  const pasteTrigger = document.getElementById('paste-trigger');
+  const pasteOverlay = document.getElementById('paste-overlay');
+  const closePasteBtn = document.getElementById('close-paste-btn');
+  const startPasteReadBtn = document.getElementById('start-paste-read-btn');
+  const pasteInput = document.getElementById('paste-input');
+  const pasteTitleInput = document.getElementById('paste-title-input');
+
+  pasteTrigger.addEventListener('click', () => {
+    pasteOverlay.classList.add('visible');
+    pasteInput.focus();
+  });
+
+  closePasteBtn.addEventListener('click', () => {
+    pasteOverlay.classList.remove('visible');
+  });
+
+  pasteOverlay.addEventListener('click', (e) => {
+    if (e.target === pasteOverlay) {
+      pasteOverlay.classList.remove('visible');
+    }
+  });
+
+  startPasteReadBtn.addEventListener('click', () => {
+    const text = pasteInput.value.trim();
+    if (!text) return;
+
+    const title = pasteTitleInput.value.trim() || 'Pasted Text';
+    handlePastedText(text, title);
+    pasteOverlay.classList.remove('visible');
+    
+    // Clear the inputs for next use
+    pasteInput.value = '';
+    pasteTitleInput.value = '';
+  });
+}
+
+async function handlePastedText(text, title, isResume = false) {
+  clearResources();
+  document.getElementById('drop-zone').classList.add('hidden');
+  setLoadIndicator(`Readying your text...`, true);
+
+  AppState.book = { name: title };
+  
+  // Create a virtual chapter
+  const safeText = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .split('\n')
+    .filter(line => line.trim().length > 0)
+    .map(line => `<p>${line}</p>`)
+    .join('');
+
+  const chapter = {
+    title: title,
+    content: safeText,
+    originalContent: text, // Store raw text for re-parsing if needed
+    href: 'paste://virtual-chapter-1'
+  };
+
+  AppState.chapters = [chapter];
+  AppState.currentChapter = 0;
+  
+  saveReaderState();
+  renderClassicReader();
+  
+  if (AppState.mode === 'rsvp') {
+    initRSVPMode(getActiveRSVPText());
+  }
+  
+  if (!isResume) {
+    updateHistoryProgress();
+  }
+  
+  setLoadIndicator('', false);
+}
+
+function bindSearchHub() {
+  const trigger = document.getElementById('search-trigger');
+  const overlay = document.getElementById('search-overlay');
+  const closeBtn = document.getElementById('close-search-btn');
+  const clearBtn = document.getElementById('clear-search-btn');
+  const searchInput = document.getElementById('universal-search-input');
+  const grid = document.getElementById('source-grid');
+  const directUrlInput = document.getElementById('direct-url-input');
+  const directLoadBtn = document.getElementById('direct-load-btn');
+
+  const openHub = () => {
+    overlay.classList.add('visible');
+    renderSources();
+  };
+
+  const closeHub = () => {
+    overlay.classList.remove('visible');
+  };
+
+  const renderSources = () => {
+    const query = searchInput.value.trim();
+    grid.innerHTML = '';
+    
+    SourceManager.Providers.forEach(provider => {
+      const card = document.createElement('div');
+      card.className = 'source-card';
+      card.innerHTML = `
+        <h4>${provider.name}</h4>
+        <p>${provider.description}</p>
+        <div class="source-tags">
+          ${provider.categories.map(cat => `<span class="source-tag">${cat}</span>`).join('')}
+        </div>
+      `;
+      
+      card.addEventListener('click', () => {
+        const url = SourceManager.getSearchUrl(provider.id, query || 'books');
+        window.open(url, '_blank');
+      });
+      
+      grid.appendChild(card);
+    });
+  };
+
+  trigger?.addEventListener('click', openHub);
+  closeBtn?.addEventListener('click', closeHub);
+  overlay?.addEventListener('click', (e) => {
+    if (e.target === overlay) closeHub();
+  });
+
+  searchInput?.addEventListener('input', renderSources);
+  clearBtn?.addEventListener('click', () => {
+    searchInput.value = '';
+    renderSources();
+  });
+
+  directLoadBtn?.addEventListener('click', async () => {
+    const url = directUrlInput.value.trim();
+    if (!url) return;
+
+    setLoadIndicator('Attempting to fetch book...', true);
+    try {
+      const buffer = await SourceManager.fetchFromUrl(url);
+      const fileName = url.split('/').pop() || 'downloaded-book';
+      const file = new File([buffer], fileName, { type: 'application/octet-stream' });
+      await handleFile(file);
+      closeHub();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setLoadIndicator('', false);
+    }
+  });
 }
 
 function bindFileInput() {
@@ -266,10 +522,64 @@ function bindDropZone() {
   dropZone.addEventListener('drop', onDrop);
 }
 
+function bindIntralinks() {
+  const readerArea = document.getElementById('reader-area');
+  readerArea.addEventListener('click', (e) => {
+    const link = e.target.closest('a');
+    if (!link) return;
+
+    const href = link.getAttribute('href');
+    if (!href) return;
+
+    // Handle internal anchors (starts with #)
+    if (href.startsWith('#')) {
+      e.preventDefault();
+      scrollToId(href.substring(1));
+      return;
+    }
+
+    // Handle cross-chapter or external-to-internal links
+    // typical EPUB href="chapter1.xhtml#part2"
+    const [path, hash] = href.split('#');
+    if (!path.includes('://') && path.trim().length > 0) {
+      // Find chapter by href
+      const chapterIdx = AppState.chapters.findIndex(c => 
+        c.href === path || 
+        c.href.endsWith('/' + path) || 
+        path.endsWith('/' + c.href)
+      );
+
+      if (chapterIdx !== -1) {
+        e.preventDefault();
+        AppState.currentChapter = chapterIdx;
+        saveReaderState();
+        renderClassicReader();
+        
+        if (hash) {
+          // Wait for render to complete
+          setTimeout(() => scrollToId(hash), 50);
+        }
+      }
+    }
+  });
+}
+
+function scrollToId(id) {
+  const readerArea = document.getElementById('reader-area');
+  const target = document.getElementById(id);
+  if (target) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else {
+    // Fallback: search within the chapter panel if multi-panel mode
+    const panel = document.querySelector(`.chapter-panel [id="${id}"]`);
+    panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
 function bindScrollProgress() {
   const readerArea = document.getElementById('reader-area');
   readerArea.addEventListener('scroll', () => {
-    if (AppState.mode !== 'classic' && AppState.mode !== 'rot') {
+    if (AppState.mode !== 'classic' && AppState.mode !== 'rot' && AppState.mode !== 'bionic') {
       return;
     }
 
@@ -282,6 +592,7 @@ function bindScrollProgress() {
       setChapterScroll(AppState.currentChapter, readerArea.scrollTop);
       saveReaderState();
       saveProgress(AppState.book?.name, AppState.currentChapter, AppState.rsvp.index, readerArea.scrollTop);
+      updateHistoryProgress();
     }
   });
 }
@@ -382,9 +693,11 @@ function navigateChapter(delta) {
   if (AppState.mode === 'rsvp') {
     initRSVPMode(getActiveRSVPText());
   }
+  updateHistoryProgress();
 }
 
 async function handleFile(file) {
+  clearResources();
   document.getElementById('drop-zone').classList.add('hidden');
   setLoadIndicator(`Loading ${file.name}...`, true);
   const arrayBuffer = await file.arrayBuffer();
@@ -402,7 +715,7 @@ async function handleFile(file) {
     } else if (ext === 'epub') {
       parsed = await parseEPUB(arrayBuffer, (idx, total) => {
         setLoadIndicator(`Parsing EPUB ${idx}/${total}`, true);
-      });
+      }, AppState.resources);
     } else {
       parsed = await parseTextFormats(arrayBuffer, file.name);
     }
@@ -424,6 +737,7 @@ async function handleFile(file) {
     title: chapter.title || `Chapter ${idx + 1}`,
     content: chapter.content || '<p></p>',
     originalContent: chapter.originalContent || chapter.content || '<p></p>',
+    href: chapter.href || '',
   })).filter((chapter) => (chapter.content || '').trim().length > 0);
 
   if (!AppState.chapters.length) {
@@ -445,7 +759,39 @@ async function handleFile(file) {
   renderTOC();
   renderClassicReader();
   updateModeUI();
+
+  // Handle Resume from history
+  if (AppState.resumeTarget && AppState.resumeTarget.title === file.name) {
+    if (Number.isInteger(AppState.resumeTarget.chapter)) {
+      AppState.currentChapter = AppState.resumeTarget.chapter;
+      renderClassicReader();
+      if (AppState.resumeTarget.scrollTop) {
+        setTimeout(() => {
+           document.getElementById('reader-area').scrollTop = AppState.resumeTarget.scrollTop;
+        }, 100);
+      }
+    }
+    AppState.resumeTarget = null;
+  }
+
+  updateHistoryProgress();
   setLoadIndicator('', false);
+}
+
+function updateHistoryProgress() {
+  if (!AppState.book) return;
+  
+  const readerArea = document.getElementById('reader-area');
+  const item = {
+    title: AppState.book.name,
+    type: (AppState.chapters[0]?.href || '').startsWith('paste://') ? 'paste' : 'file',
+    chapter: AppState.currentChapter,
+    scrollTop: readerArea.scrollTop,
+    // only store content if it's a paste and not too huge
+    content: (AppState.chapters[0]?.href || '').startsWith('paste://') ? AppState.chapters[0].originalContent : undefined
+  };
+
+  addToHistory(item);
 }
 
 function getChapterHTML(index, includeHeading = true) {
@@ -456,9 +802,12 @@ function getChapterHTML(index, includeHeading = true) {
 
   const canonicalSource = chapter.originalContent || chapter.content || '';
 
-  const source = (AppState.mode === 'rot' && AppState.rot.active)
-    ? applyROTTransforms(canonicalSource, AppState.rot.intensity, AppState.rot.transforms)
-    : canonicalSource;
+  let source = canonicalSource;
+  if (AppState.mode === 'rot' && AppState.rot.active) {
+    source = applyROTTransforms(canonicalSource, AppState.rot.intensity, AppState.rot.transforms);
+  } else if (AppState.mode === 'bionic') {
+    source = applyBionicFormatting(canonicalSource);
+  }
 
   if (!includeHeading) {
     return source;
@@ -581,7 +930,7 @@ function updateModeUI() {
 
   document.getElementById('drop-zone').classList.toggle('hidden', hasBook);
 
-  const showClassic = AppState.mode === 'classic' || AppState.mode === 'rot';
+  const showClassic = AppState.mode === 'classic' || AppState.mode === 'rot' || AppState.mode === 'bionic';
   classicReader.style.display = showClassic ? 'block' : 'none';
   rsvpReader.style.display = AppState.mode === 'rsvp' ? 'flex' : 'none';
   rsvpControls.style.display = AppState.mode === 'rsvp' ? 'flex' : 'none';
