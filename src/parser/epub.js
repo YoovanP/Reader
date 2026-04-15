@@ -4,12 +4,59 @@ function sanitizeHTML(html) {
   template.content.querySelectorAll('script, style, iframe, object, embed').forEach((el) => el.remove());
   template.content.querySelectorAll('*').forEach((el) => {
     [...el.attributes].forEach((attr) => {
-      if (attr.name.toLowerCase().startsWith('on')) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on')) {
         el.removeAttribute(attr.name);
+      }
+      // specifically allow src for img, but we will rewrite it
+      if (name === 'src' && el.tagName !== 'IMG') {
+         el.removeAttribute(attr.name);
       }
     });
   });
   return template.innerHTML;
+}
+
+/**
+ * Resolves relative paths in HTML to Blob URLs from the EPUB archive.
+ */
+async function resolveEpubResources(html, bookOrZip, baseDir, resources) {
+  const container = document.createElement('div');
+  container.innerHTML = html;
+
+  const images = container.querySelectorAll('img');
+  for (const img of images) {
+    const src = img.getAttribute('src');
+    if (!src || src.includes('://') || src.startsWith('data:')) {
+      continue;
+    }
+
+    const fullPath = joinPath(baseDir, src);
+    try {
+      let blob;
+      // Handle epub.js Archive
+      if (bookOrZip.archive && typeof bookOrZip.archive.getBlob === 'function') {
+        blob = await bookOrZip.archive.getBlob(fullPath);
+      } 
+      // Handle JSZip
+      else if (typeof bookOrZip.file === 'function') {
+        const file = bookOrZip.file(fullPath) || bookOrZip.file(decodeURIComponent(fullPath));
+        if (file) {
+          blob = await file.async('blob');
+        }
+      }
+
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        img.src = url;
+        resources.push(url);
+      }
+    } catch (e) {
+      console.warn('Failed to resolve image', fullPath, e);
+    }
+  }
+
+  return container.innerHTML;
 }
 
 function normalizeToHtmlFragment(loaded) {
@@ -120,7 +167,7 @@ async function loadSpineItem(book, item) {
   };
 }
 
-async function parseWithEpubJs(arrayBuffer, onProgress) {
+async function parseWithEpubJs(arrayBuffer, onProgress, resources = []) {
   const book = ePub(arrayBuffer);
   await book.ready;
 
@@ -136,13 +183,16 @@ async function parseWithEpubJs(arrayBuffer, onProgress) {
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = html;
       const bodyContent = tempDiv.querySelector('body')?.innerHTML || html;
-      const safe = sanitizeHTML(bodyContent);
+      const baseDir = loaded.href.includes('/') ? loaded.href.slice(0, loaded.href.lastIndexOf('/')) : '';
+      const resolved = await resolveEpubResources(bodyContent, book, baseDir, resources);
+      const safe = sanitizeHTML(resolved);
 
       if (safe.trim()) {
         chapters.push({
           title: findTocTitle(loaded.href, toc) || loaded.idref || `Chapter ${chapters.length + 1}`,
           content: safe,
           originalContent: safe,
+          href: loaded.href,
         });
       }
     }
@@ -215,7 +265,7 @@ function chapterTitleFromHtml(html, fallback) {
   return text || fallback;
 }
 
-async function parseWithJsZip(arrayBuffer, onProgress) {
+async function parseWithJsZip(arrayBuffer, onProgress, resources = []) {
   if (typeof JSZip === 'undefined') {
     throw new Error('JSZip is not available for EPUB zip fallback parsing.');
   }
@@ -290,13 +340,15 @@ async function parseWithJsZip(arrayBuffer, onProgress) {
 
     const html = await file.async('text');
     const body = extractBodyHtml(html);
-    const safe = sanitizeHTML(body);
+    const resolved = await resolveEpubResources(body, zip, opfDir, resources);
+    const safe = sanitizeHTML(resolved);
 
     if (safe.trim()) {
       chapters.push({
         title: chapterTitleFromHtml(html, `Chapter ${chapters.length + 1}`),
         content: safe,
         originalContent: safe,
+        href: item.href,
       });
     }
 
@@ -314,11 +366,11 @@ async function parseWithJsZip(arrayBuffer, onProgress) {
   };
 }
 
-export async function parseEPUB(arrayBuffer, onProgress) {
+export async function parseEPUB(arrayBuffer, onProgress, resources = []) {
   let epubJsError = null;
 
   try {
-    const parsed = await parseWithEpubJs(arrayBuffer, onProgress);
+    const parsed = await parseWithEpubJs(arrayBuffer, onProgress, resources);
     if ((parsed.chapters || []).length > 0) {
       return parsed;
     }
@@ -326,7 +378,7 @@ export async function parseEPUB(arrayBuffer, onProgress) {
     epubJsError = error;
   }
 
-  const zipParsed = await parseWithJsZip(arrayBuffer, onProgress);
+  const zipParsed = await parseWithJsZip(arrayBuffer, onProgress, resources);
   if ((zipParsed.chapters || []).length > 0) {
     return zipParsed;
   }

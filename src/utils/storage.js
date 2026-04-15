@@ -58,12 +58,15 @@ export const AppState = {
     wordPercent: 0,
     scrollTopByChapter: {},
   },
+  resources: [], // Active Blob URLs for media
+  history: [],   // Recent reading items
 };
 
 export function initStorage() {
   const savedSettings = JSON.parse(localStorage.getItem('readrot-settings') || '{}');
   const savedReader = JSON.parse(localStorage.getItem('readrot-reader-state') || '{}');
   const savedRsvp = JSON.parse(localStorage.getItem('readrot-rsvp') || '{}');
+  const savedHistory = JSON.parse(localStorage.getItem('readrot-history') || '[]');
 
   Object.assign(AppState.settings, savedSettings);
   if (!/^#[0-9a-fA-F]{6}$/.test(String(AppState.settings.readerBg || ''))) {
@@ -73,6 +76,10 @@ export function initStorage() {
     wpm: savedRsvp.wpm || AppState.rsvp.wpm,
     index: savedRsvp.index || 0,
   });
+
+  if (Array.isArray(savedHistory)) {
+    AppState.history = savedHistory;
+  }
 
   if (Number.isInteger(savedReader.currentChapter)) {
     AppState.currentChapter = savedReader.currentChapter;
@@ -134,6 +141,50 @@ export function setChapterScroll(chapterIndex, scrollTop) {
 
 export function getChapterScroll(chapterIndex) {
   return AppState.progress.scrollTopByChapter[String(chapterIndex)] || 0;
+}
+
+export function addToHistory(item) {
+  const maxHistory = 30;
+  
+  // Remove existing entry for same book/paste if it exists
+  const existingIndex = AppState.history.findIndex(h => 
+    (h.id && h.id === item.id) || (h.title === item.title && h.type === item.type)
+  );
+  
+  if (existingIndex !== -1) {
+    AppState.history.splice(existingIndex, 1);
+  }
+  
+  // Add new entry to top
+  AppState.history.unshift({
+    ...item,
+    lastRead: Date.now()
+  });
+  
+  // Trim to max
+  if (AppState.history.length > maxHistory) {
+    AppState.history = AppState.history.slice(0, maxHistory);
+  }
+  
+  localStorage.setItem('readrot-history', JSON.stringify(AppState.history));
+}
+
+export function clearHistory() {
+  AppState.history = [];
+  localStorage.removeItem('readrot-history');
+}
+
+export function clearResources() {
+  if (AppState.resources && AppState.resources.length) {
+    AppState.resources.forEach((url) => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        console.warn('Failed to revoke URL', url, e);
+      }
+    });
+    AppState.resources = [];
+  }
 }
 
 export function applySettingsToDOM() {

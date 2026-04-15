@@ -165,10 +165,6 @@ function bindToolbar() {
   );
 }
 
-function bindPasteHub() {
-  // ... existing code ...
-}
-
 function bindHistoryHub() {
   const trigger = document.getElementById('history-trigger');
   const overlay = document.getElementById('history-overlay');
@@ -260,7 +256,7 @@ async function resumeFromHistory(item) {
   }
 }
 
-function bindSearchHub() {
+function bindPasteHub() {
   const pasteTrigger = document.getElementById('paste-trigger');
   const pasteOverlay = document.getElementById('paste-overlay');
   const closePasteBtn = document.getElementById('close-paste-btn');

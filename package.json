@@ -1,0 +1,20 @@
+{
+  "name": "readrot",
+  "version": "1.0.0",
+  "description": "Client-side reading app for PDF, EPUB, and text formats.",
+  "main": "index.html",
+  "scripts": {
+    "dev": "npx http-server -c-1 -p 8080",
+    "start": "npx http-server -c-1 -p 8080"
+  },
+  "keywords": [
+    "reader",
+    "epub",
+    "pdf"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}
