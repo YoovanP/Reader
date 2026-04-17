@@ -272,6 +272,19 @@
       font-family: var(--font-main);
     }
 
+    #classic-reader a {
+      color: var(--accent);
+      text-decoration: underline;
+      text-decoration-color: rgba(200, 169, 110, 0.45);
+      text-underline-offset: 2px;
+      transition: color var(--transition), text-decoration-color var(--transition);
+    }
+
+    #classic-reader a:hover {
+      color: #e8c98a;
+      text-decoration-color: rgba(232, 201, 138, 0.8);
+    }
+
     #classic-reader p {
       margin: 0 0 var(--paragraph-spacing) 0;
     }
