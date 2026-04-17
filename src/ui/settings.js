@@ -82,6 +82,8 @@ export function initSettings(options = {}) {
   bindSettingInput('reading-width', 'readingWidth', (v) => Number(v), onVisualChange);
   bindSettingInput('letter-spacing', 'letterSpacing', (v) => Number(v), onVisualChange);
   bindSettingInput('paragraph-spacing', 'paragraphSpacing', (v) => Number(v), onVisualChange);
+  bindSettingInput('bold-weight', 'boldWeight', (v) => Number(v), onVisualChange);
+  bindSettingInput('bionic-weight', 'bionicWeight', (v) => Number(v), onVisualChange);
   bindSettingInput('font-color', 'fontColor', (v) => v, onVisualChange);
   bindSettingInput('bg-color', 'readerBg', (v) => v, onVisualChange);
   bindSettingInput('accent-color', 'accentColor', (v) => v, onVisualChange);
@@ -110,10 +112,12 @@ export function initSettings(options = {}) {
       readingWidth: 680,
       letterSpacing: 0,
       paragraphSpacing: 1,
+      boldWeight: 600,
+      bionicWeight: 700,
       hideToolbar: false,
     });
 
-    ['theme-select', 'font-family', 'font-size', 'line-height', 'reading-width', 'letter-spacing', 'paragraph-spacing', 'font-color', 'bg-color', 'accent-color'].forEach((id) => {
+    ['theme-select', 'font-family', 'font-size', 'line-height', 'reading-width', 'letter-spacing', 'paragraph-spacing', 'bold-weight', 'bionic-weight', 'font-color', 'bg-color', 'accent-color'].forEach((id) => {
       const el = document.getElementById(id);
       if (!el) {
         return;
@@ -129,6 +133,8 @@ export function initSettings(options = {}) {
           'reading-width': AppState.settings.readingWidth,
           'letter-spacing': AppState.settings.letterSpacing,
           'paragraph-spacing': AppState.settings.paragraphSpacing,
+          'bold-weight': AppState.settings.boldWeight,
+          'bionic-weight': AppState.settings.bionicWeight,
           'font-color': AppState.settings.fontColor,
           'bg-color': AppState.settings.readerBg,
           'accent-color': AppState.settings.accentColor,

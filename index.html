@@ -30,6 +30,8 @@
       --reader-bg: transparent;
       --letter-spacing: 0px;
       --paragraph-spacing: 1rem;
+      --bold-weight: 600;
+      --bionic-weight: 700;
     }
 
     body.light {
@@ -271,7 +273,11 @@
     }
 
     #classic-reader .bionic-focus {
-      font-weight: 700;
+      font-weight: var(--bionic-weight);
+    }
+
+    strong, b {
+      font-weight: var(--bold-weight);
     }
 
     #classic-reader.horizontal {
@@ -835,6 +841,16 @@
         <div class="setting-row">
           <label for="paragraph-spacing">Paragraph Spacing</label>
           <input type="range" id="paragraph-spacing" min="0.3" max="2.5" step="0.1" value="1">
+        </div>
+
+        <div class="setting-row">
+          <label for="bold-weight">Bold Weight</label>
+          <input type="range" id="bold-weight" min="100" max="900" step="100" value="600">
+        </div>
+
+        <div class="setting-row">
+          <label for="bionic-weight">Bionic Bold Weight</label>
+          <input type="range" id="bionic-weight" min="100" max="900" step="100" value="700">
         </div>
 
         <div class="setting-row">

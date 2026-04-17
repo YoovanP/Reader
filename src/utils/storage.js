@@ -43,6 +43,8 @@ export const AppState = {
     traversalMode: 'scroll',
     chapterMode: 'divided',
     hideToolbar: false,
+    boldWeight: 600,
+    bionicWeight: 700,
   },
 
   ai: {
@@ -205,4 +207,6 @@ export function applySettingsToDOM() {
   root.style.setProperty('--reading-width', AppState.settings.readingWidth + 'px');
   root.style.setProperty('--letter-spacing', AppState.settings.letterSpacing + 'px');
   root.style.setProperty('--paragraph-spacing', AppState.settings.paragraphSpacing + 'rem');
+  root.style.setProperty('--bold-weight', AppState.settings.boldWeight);
+  root.style.setProperty('--bionic-weight', AppState.settings.bionicWeight);
 }
