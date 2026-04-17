@@ -219,6 +219,10 @@
       background: var(--bg);
     }
 
+    #reader-area.mode-rsvp {
+      overflow: hidden;
+    }
+
     #drop-zone {
       position: absolute;
       inset: 1rem;
@@ -818,9 +822,9 @@
           </select>
         </div>
 
-        <div class="setting-row">
+        <div class="setting-row inline">
           <label for="font-size">Font Size</label>
-          <input type="range" id="font-size" min="12" max="36" value="18">
+          <input type="number" id="font-size" min="12" max="72" value="18">
         </div>
 
         <div class="setting-row">

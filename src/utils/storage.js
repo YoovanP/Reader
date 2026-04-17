@@ -147,27 +147,28 @@ export function getChapterScroll(chapterIndex) {
 
 export function addToHistory(item) {
   const maxHistory = 30;
-  
-  // Remove existing entry for same book/paste if it exists
-  const existingIndex = AppState.history.findIndex(h => 
-    (h.id && h.id === item.id) || (h.title === item.title && h.type === item.type)
-  );
-  
+
+  // Remove existing entry for same file/paste (prefer fileId for files).
+  const existingIndex = AppState.history.findIndex((h) => {
+    if (item.fileId && h.fileId) return h.fileId === item.fileId;
+    return h.title === item.title && h.type === item.type;
+  });
+
   if (existingIndex !== -1) {
     AppState.history.splice(existingIndex, 1);
   }
-  
-  // Add new entry to top
+
+  // Add new entry to top.
   AppState.history.unshift({
     ...item,
-    lastRead: Date.now()
+    lastRead: Date.now(),
   });
-  
-  // Trim to max
+
+  // Trim to max.
   if (AppState.history.length > maxHistory) {
     AppState.history = AppState.history.slice(0, maxHistory);
   }
-  
+
   localStorage.setItem('readrot-history', JSON.stringify(AppState.history));
 }
 

@@ -24,7 +24,7 @@ function bindSettingInput(id, field, parser = (value) => value, onChange) {
     el.value = String(AppState.settings[field]);
   }
 
-  const eventName = el.type === 'range' || el.type === 'color' ? 'input' : 'change';
+  const eventName = el.type === 'range' || el.type === 'color' || el.type === 'number' ? 'input' : 'change';
   el.addEventListener(eventName, (e) => {
     const raw = el.type === 'checkbox' ? e.target.checked : e.target.value;
     AppState.settings[field] = parser(raw);

@@ -29,6 +29,52 @@ import { initSettings } from './ui/settings.js';
 import { handleSlopify } from './ai/slopify.js';
 import { SourceManager } from './sources/manager.js';
 
+// ── File Handle Store (IndexedDB) ────────────────────────────────────────────
+const FH_DB_NAME = 'readrot-fh';
+const FH_DB_STORE = 'handles';
+
+function openFHDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(FH_DB_NAME, 1);
+    req.onupgradeneeded = (e) => e.target.result.createObjectStore(FH_DB_STORE);
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
+async function saveFileHandle(fileId, handle) {
+  try {
+    const db = await openFHDB();
+    const tx = db.transaction(FH_DB_STORE, 'readwrite');
+    tx.objectStore(FH_DB_STORE).put(handle, fileId);
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+    db.close();
+  } catch (e) {
+    console.warn('Could not store file handle:', e);
+  }
+}
+
+async function getFileHandle(fileId) {
+  try {
+    const db = await openFHDB();
+    const tx = db.transaction(FH_DB_STORE, 'readonly');
+    const handle = await new Promise((res, rej) => {
+      const req = tx.objectStore(FH_DB_STORE).get(fileId);
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    });
+    db.close();
+    return handle || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Build a stable ID for a file based on its name + size + lastModified. */
+function makeFileId(file) {
+  return `file::${file.name}::${file.size}::${file.lastModified}`;
+}
+
 function setLoadIndicator(text = '', visible = false) {
   const el = document.getElementById('load-indicator');
   if (!el) {
@@ -209,7 +255,8 @@ function renderHistory() {
       month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
     });
     const badgeClass = item.type === 'paste' ? 'badge-paste' : 'badge-file';
-    
+    const actionLabel = item.type === 'paste' ? 'Resume →' : 'Open file →';
+
     return `
       <div class="history-item" data-index="${idx}">
         <div class="history-item-info">
@@ -220,7 +267,7 @@ function renderHistory() {
             <span>Ch. ${item.chapter + 1}</span>
           </div>
         </div>
-        <div style="font-size:0.8rem; color:var(--accent);">Resume →</div>
+        <div style="font-size:0.8rem; color:var(--accent);">${actionLabel}</div>
       </div>
     `;
   }).join('');
@@ -238,22 +285,84 @@ function renderHistory() {
 
 async function resumeFromHistory(item) {
   if (item.type === 'paste' && item.content) {
-    handlePastedText(item.content, item.title, true);
-    // Restore progress after loading
-    setTimeout(() => {
-      AppState.currentChapter = item.chapter || 0;
-      renderClassicReader();
-    }, 100);
-  } else {
-    // For files, we notify the user to upload
-    setLoadIndicator(`History: Please re-upload "${item.title}" to resume...`, true);
-    // Store the desired progress in state so handleFile can pick it up
-    AppState.resumeTarget = {
-      title: item.title,
-      chapter: item.chapter,
-      scrollTop: item.scrollTop
-    };
+    await handlePastedText(item.content, item.title, true);
+    AppState.currentChapter = item.chapter || 0;
+    renderClassicReader();
+    if (item.scrollTop) {
+      requestAnimationFrame(() => {
+        document.getElementById('reader-area').scrollTop = item.scrollTop;
+      });
+    }
+    return;
   }
+
+  // ── File resume ─────────────────────────────────────────────────────────────
+  // Set resume target so handleFile restores chapter + scroll after parsing.
+  AppState.resumeTarget = {
+    fileId: item.fileId,
+    title: item.title,
+    chapter: item.chapter,
+    scrollTop: item.scrollTop,
+  };
+
+  // 1. Try the stored FileSystemFileHandle (Chromium only).
+  if (item.fileId) {
+    const handle = await getFileHandle(item.fileId);
+    if (handle) {
+      let perm = 'prompt';
+      try {
+        perm = await handle.queryPermission({ mode: 'read' });
+        if (perm !== 'granted') {
+          perm = await handle.requestPermission({ mode: 'read' });
+        }
+      } catch (_) {
+        perm = 'denied';
+      }
+      if (perm === 'granted') {
+        try {
+          const file = await handle.getFile();
+          await handleFile(file);
+          return;
+        } catch (e) {
+          console.warn('Stored handle stale, falling back to picker:', e);
+        }
+      }
+    }
+  }
+
+  // 2. Fallback: open file picker (File System Access API).
+  if (window.showOpenFilePicker) {
+    setLoadIndicator(`Locate "${item.title}" to resume…`, true);
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        id: 'readrot-resume',
+        startIn: 'documents',
+        types: [{
+          description: 'Book files',
+          accept: {
+            'application/epub+zip': ['.epub'],
+            'application/pdf': ['.pdf'],
+            'text/plain': ['.txt', '.md', '.markdown'],
+            'text/html': ['.html', '.htm'],
+          },
+        }],
+      });
+      // Persist for future opens.
+      if (item.fileId) await saveFileHandle(item.fileId, handle);
+      const file = await handle.getFile();
+      await handleFile(file);
+    } catch (e) {
+      // User cancelled or picker unavailable.
+      setLoadIndicator('', false);
+      AppState.resumeTarget = null;
+    }
+    return;
+  }
+
+  // 3. Last resort: tell user to re-upload.
+  setLoadIndicator(`Re-upload "${item.title}" via Upload to resume.`, true);
+  setTimeout(() => setLoadIndicator('', false), 5000);
+  AppState.resumeTarget = null;
 }
 
 function bindPasteHub() {
@@ -698,7 +807,12 @@ async function handleFile(file) {
   setLoadIndicator(`Loading ${file.name}...`, true);
   const arrayBuffer = await file.arrayBuffer();
 
-  AppState.book = { name: file.name };
+  const fileId = makeFileId(file);
+  AppState.book = { name: file.name, fileId };
+
+  // Persist the FileSystemFileHandle in IndexedDB when available (drag-and-drop
+  // or upload via <input> don't give us a handle, so we skip it here).
+  // Handles from the picker are saved in resumeFromHistory.
 
   const ext = getFileExtension(file);
   let parsed = { chapters: [], toc: [] };
@@ -756,16 +870,17 @@ async function handleFile(file) {
   renderClassicReader();
   updateModeUI();
 
-  // Handle Resume from history
-  if (AppState.resumeTarget && AppState.resumeTarget.title === file.name) {
-    if (Number.isInteger(AppState.resumeTarget.chapter)) {
-      AppState.currentChapter = AppState.resumeTarget.chapter;
+  // Handle Resume from history — match by fileId first, then fall back to title.
+  const rt = AppState.resumeTarget;
+  if (rt && (rt.fileId === fileId || (!rt.fileId && rt.title === file.name))) {
+    if (Number.isInteger(rt.chapter)) {
+      AppState.currentChapter = rt.chapter;
       renderClassicReader();
-      if (AppState.resumeTarget.scrollTop) {
-        setTimeout(() => {
-           document.getElementById('reader-area').scrollTop = AppState.resumeTarget.scrollTop;
-        }, 100);
-      }
+    }
+    if (rt.scrollTop) {
+      requestAnimationFrame(() => {
+        document.getElementById('reader-area').scrollTop = rt.scrollTop;
+      });
     }
     AppState.resumeTarget = null;
   }
@@ -776,15 +891,20 @@ async function handleFile(file) {
 
 function updateHistoryProgress() {
   if (!AppState.book) return;
-  
+
   const readerArea = document.getElementById('reader-area');
+  const isPaste = (AppState.chapters[0]?.href || '').startsWith('paste://');
+
   const item = {
     title: AppState.book.name,
-    type: (AppState.chapters[0]?.href || '').startsWith('paste://') ? 'paste' : 'file',
+    fileId: AppState.book.fileId || null,
+    type: isPaste ? 'paste' : 'file',
     chapter: AppState.currentChapter,
     scrollTop: readerArea.scrollTop,
-    // only store content if it's a paste and not too huge
-    content: (AppState.chapters[0]?.href || '').startsWith('paste://') ? AppState.chapters[0].originalContent : undefined
+    // Store content for pastes only (cap to avoid localStorage bloat).
+    content: isPaste
+      ? AppState.chapters.map(c => c.originalContent || '').join('\n').slice(0, 200_000)
+      : undefined,
   };
 
   addToHistory(item);
@@ -925,6 +1045,7 @@ function updateModeUI() {
   }
 
   document.getElementById('drop-zone').classList.toggle('hidden', hasBook);
+  document.getElementById('reader-area').classList.toggle('mode-rsvp', AppState.mode === 'rsvp');
 
   const showClassic = AppState.mode === 'classic' || AppState.mode === 'rot' || AppState.mode === 'bionic';
   classicReader.style.display = showClassic ? 'block' : 'none';
