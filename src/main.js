@@ -8,8 +8,6 @@ import {
   saveSettings,
   setChapterScroll,
   clearResources,
-  addToHistory,
-  clearHistory,
 } from './utils/storage.js';
 import { parsePDF } from './parser/pdf.js';
 import { parseEPUB } from './parser/epub.js';
@@ -25,13 +23,20 @@ import {
 } from './modes/rsvp.js';
 import { applyROTTransforms, initROTMode } from './modes/rot.js';
 import { applyBionicFormatting } from './modes/bionic.js';
-import { initSettings } from './ui/settings.js';
+import { initSettings } from './ui/settings.js?v=8';
 import { handleSlopify } from './ai/slopify.js';
 import { SourceManager } from './sources/manager.js';
+
+let wakeLock = null;
+let tocCollapsed = true;
+let libraryProgressTimer = null;
+let suppressLibrarySave = false;
 
 // ── File Handle Store (IndexedDB) ────────────────────────────────────────────
 const FH_DB_NAME = 'readrot-fh';
 const FH_DB_STORE = 'handles';
+const LIBRARY_DB_NAME = 'readrot-library';
+const LIBRARY_DB_STORE = 'items';
 
 function openFHDB() {
   return new Promise((resolve, reject) => {
@@ -70,9 +75,102 @@ async function getFileHandle(fileId) {
   }
 }
 
+function openLibraryDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(LIBRARY_DB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(LIBRARY_DB_STORE)) {
+        db.createObjectStore(LIBRARY_DB_STORE, { keyPath: 'id' });
+      }
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
+async function getLibraryItem(id) {
+  if (!id) return null;
+  const db = await openLibraryDB();
+  try {
+    const tx = db.transaction(LIBRARY_DB_STORE, 'readonly');
+    return await new Promise((resolve, reject) => {
+      const req = tx.objectStore(LIBRARY_DB_STORE).get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function getLibraryItems() {
+  const db = await openLibraryDB();
+  try {
+    const tx = db.transaction(LIBRARY_DB_STORE, 'readonly');
+    const items = await new Promise((resolve, reject) => {
+      const req = tx.objectStore(LIBRARY_DB_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+    return items.sort((a, b) => (b.lastReadAt || 0) - (a.lastReadAt || 0));
+  } finally {
+    db.close();
+  }
+}
+
+async function putLibraryItem(item) {
+  const db = await openLibraryDB();
+  try {
+    const tx = db.transaction(LIBRARY_DB_STORE, 'readwrite');
+    tx.objectStore(LIBRARY_DB_STORE).put(item);
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function deleteLibraryItem(id) {
+  const db = await openLibraryDB();
+  try {
+    const tx = db.transaction(LIBRARY_DB_STORE, 'readwrite');
+    tx.objectStore(LIBRARY_DB_STORE).delete(id);
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function clearLibraryItems() {
+  const db = await openLibraryDB();
+  try {
+    const tx = db.transaction(LIBRARY_DB_STORE, 'readwrite');
+    tx.objectStore(LIBRARY_DB_STORE).clear();
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
 /** Build a stable ID for a file based on its name + size + lastModified. */
 function makeFileId(file) {
   return `file::${file.name}::${file.size}::${file.lastModified}`;
+}
+
+function makePasteId() {
+  return `paste::${Date.now()}::${Math.random().toString(36).slice(2)}`;
 }
 
 function setLoadIndicator(text = '', visible = false) {
@@ -119,8 +217,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     },
     onFullscreen: () => toggleFullscreen(),
+    onKeepAwakeChange: () => syncWakeLock(),
+    onHistoryChange: () => syncHistoryAvailability(),
   });
 
+  registerServiceWorker();
   bindToolbar();
   bindFileInput();
   bindDropZone();
@@ -129,7 +230,8 @@ document.addEventListener('DOMContentLoaded', () => {
   bindSearchHub();
   bindIntralinks();
   bindPasteHub();
-  bindHistoryHub();
+  bindLibraryHub();
+  bindWakeLockLifecycle();
 
   const modeSwitcher = document.getElementById('mode-switcher');
   modeSwitcher.addEventListener('change', (e) => {
@@ -143,11 +245,132 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   updateModeUI();
+  syncWakeLock();
+  syncHistoryAvailability();
 });
 
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator) || location.protocol === 'file:') {
+    return;
+  }
+
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch((error) => {
+      console.warn('Service worker registration failed:', error);
+    });
+  });
+}
+
+async function syncWakeLock() {
+  const shouldKeepAwake = !!AppState.settings.keepAwake && document.visibilityState === 'visible';
+
+  if (!shouldKeepAwake || !('wakeLock' in navigator)) {
+    if (wakeLock) {
+      try {
+        await wakeLock.release();
+      } catch (_) {
+        // The browser may have already released the lock.
+      }
+      wakeLock = null;
+    }
+    return;
+  }
+
+  if (wakeLock) {
+    return;
+  }
+
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => {
+      wakeLock = null;
+    });
+  } catch (error) {
+    console.warn('Screen Wake Lock unavailable:', error);
+  }
+}
+
+function bindWakeLockLifecycle() {
+  document.addEventListener('visibilitychange', () => {
+    syncWakeLock();
+  });
+
+  ['pointerdown', 'keydown', 'touchstart'].forEach((eventName) => {
+    document.addEventListener(eventName, () => {
+      syncWakeLock();
+    }, { passive: true });
+  });
+}
+
 function bindToolbar() {
-  document.getElementById('upload-trigger').addEventListener('click', () => {
+  const uploadTrigger = document.getElementById('upload-trigger');
+  const uploadMenu = document.getElementById('upload-menu');
+  const closeUploadMenu = () => {
+    uploadMenu?.classList.add('hidden');
+    uploadTrigger?.setAttribute('aria-expanded', 'false');
+  };
+  const toggleUploadMenu = () => {
+    const isOpen = !uploadMenu?.classList.contains('hidden');
+    uploadMenu?.classList.toggle('hidden', isOpen);
+    uploadTrigger?.setAttribute('aria-expanded', String(!isOpen));
+  };
+
+  uploadTrigger?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleUploadMenu();
+  });
+
+  document.getElementById('upload-file-action')?.addEventListener('click', () => {
+    closeUploadMenu();
     document.getElementById('upload-btn').click();
+  });
+
+  document.getElementById('upload-paste-action')?.addEventListener('click', () => {
+    closeUploadMenu();
+    document.getElementById('paste-trigger')?.click();
+  });
+
+  document.getElementById('upload-search-action')?.addEventListener('click', () => {
+    closeUploadMenu();
+    document.getElementById('search-trigger')?.click();
+  });
+
+  document.getElementById('drop-upload-trigger')?.addEventListener('click', () => {
+    document.getElementById('upload-btn').click();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest?.('.upload-menu')) {
+      closeUploadMenu();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeUploadMenu();
+    }
+  });
+
+  document.getElementById('toc-toggle')?.addEventListener('click', () => {
+    tocCollapsed = !tocCollapsed;
+    syncTOCVisibility();
+  });
+
+  document.getElementById('mobile-menu-btn')?.addEventListener('click', () => {
+    tocCollapsed = !tocCollapsed;
+    syncTOCVisibility();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (window.innerWidth > 900 || tocCollapsed) {
+      return;
+    }
+    const target = e.target;
+    const clickedTOC = target.closest?.('#toc-sidebar, #toc-toggle, #mobile-menu-btn');
+    if (!clickedTOC) {
+      tocCollapsed = true;
+      syncTOCVisibility();
+    }
   });
 
   document.getElementById('prev-chapter').addEventListener('click', () => {
@@ -211,33 +434,36 @@ function bindToolbar() {
   );
 }
 
-function bindHistoryHub() {
-  const trigger = document.getElementById('history-trigger');
-  const overlay = document.getElementById('history-overlay');
-  const closeBtn = document.getElementById('close-history-btn');
-  const clearBtn = document.getElementById('clear-history-btn');
-
-  trigger.addEventListener('click', () => {
-    renderHistory();
-    overlay.classList.add('visible');
-  });
-
-  closeBtn.addEventListener('click', () => {
-    overlay.classList.remove('visible');
-  });
-
-  clearBtn.addEventListener('click', () => {
-    if (confirm('Are you sure you want to clear your reading history?')) {
-      clearHistory();
-      renderHistory();
-    }
-  });
-
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.classList.remove('visible');
-  });
+function syncHistoryAvailability() {
+  const enabled = AppState.settings.historyEnabled !== false;
+  document.getElementById('library-trigger')?.classList.toggle('hidden', !enabled);
+  if (!enabled) {
+    document.getElementById('library-overlay')?.classList.remove('visible');
+  }
 }
 
+function syncTOCVisibility() {
+  const hasChapters = AppState.chapters.length > 0;
+  const sidebar = document.getElementById('toc-sidebar');
+  const desktopToggle = document.getElementById('toc-toggle');
+  const mobileToggle = document.getElementById('mobile-menu-btn');
+
+  desktopToggle?.classList.toggle('available', hasChapters);
+  desktopToggle?.classList.toggle('active', hasChapters && !tocCollapsed);
+  mobileToggle?.classList.toggle('hidden', !hasChapters);
+  mobileToggle?.classList.toggle('active', hasChapters && !tocCollapsed);
+
+  if (!hasChapters || tocCollapsed) {
+    sidebar?.classList.add('hidden');
+    sidebar?.classList.remove('visible');
+    return;
+  }
+
+  sidebar?.classList.remove('hidden');
+  sidebar?.classList.add('visible');
+}
+
+/* Removed history feature.
 function renderHistory() {
   const list = document.getElementById('history-list');
   const count = document.getElementById('history-count');
@@ -365,6 +591,7 @@ async function resumeFromHistory(item) {
   AppState.resumeTarget = null;
 }
 
+*/
 function bindPasteHub() {
   const pasteTrigger = document.getElementById('paste-trigger');
   const pasteOverlay = document.getElementById('paste-overlay');
@@ -402,12 +629,13 @@ function bindPasteHub() {
   });
 }
 
-async function handlePastedText(text, title, isResume = false) {
+async function handlePastedText(text, title, isResume = false, options = {}) {
   clearResources();
   document.getElementById('drop-zone').classList.add('hidden');
   setLoadIndicator(`Readying your text...`, true);
 
-  AppState.book = { name: title };
+  const libraryId = options.libraryItem?.id || makePasteId();
+  AppState.book = { name: title, libraryId, kind: 'paste' };
   
   // Create a virtual chapter
   const safeText = text
@@ -427,7 +655,9 @@ async function handlePastedText(text, title, isResume = false) {
   };
 
   AppState.chapters = [chapter];
-  AppState.currentChapter = 0;
+  AppState.currentChapter = Number.isInteger(options.libraryItem?.chapter) ? options.libraryItem.chapter : 0;
+  AppState.rsvp.index = Number.isInteger(options.libraryItem?.rsvpIndex) ? options.libraryItem.rsvpIndex : 0;
+  tocCollapsed = window.innerWidth <= 900;
   
   saveReaderState();
   renderClassicReader();
@@ -438,6 +668,31 @@ async function handlePastedText(text, title, isResume = false) {
   
   if (!isResume) {
     updateHistoryProgress();
+  }
+
+  if (options.libraryItem?.scrollTop) {
+    requestAnimationFrame(() => {
+      document.getElementById('reader-area').scrollTop = options.libraryItem.scrollTop;
+    });
+  }
+
+  if (!suppressLibrarySave && AppState.settings.historyEnabled !== false) {
+    try {
+      await putLibraryItem({
+        ...(options.libraryItem || {}),
+        id: libraryId,
+        kind: 'paste',
+        title,
+        textContent: text,
+        chapter: AppState.currentChapter,
+        scrollTop: document.getElementById('reader-area').scrollTop || 0,
+        rsvpIndex: AppState.rsvp.index || 0,
+        lastReadAt: Date.now(),
+      });
+    } catch (error) {
+      console.error('Failed to store pasted text in History.', error);
+      alert('This text is readable now, but it could not be saved to History.');
+    }
   }
   
   setLoadIndicator('', false);
@@ -692,6 +947,7 @@ function bindScrollProgress() {
     const pct = Math.max(0, Math.min(100, (readerArea.scrollTop / max) * 100));
     AppState.progress.scrollPercent = pct;
     document.getElementById('progress-bar').style.width = `${pct}%`;
+    scheduleLibraryProgressUpdate();
 
     if (AppState.settings.chapterMode === 'divided' && AppState.settings.traversalMode === 'scroll') {
       setChapterScroll(AppState.currentChapter, readerArea.scrollTop);
@@ -760,7 +1016,8 @@ function bindKeyboardShortcuts() {
         break;
       }
       case 'Escape':
-        document.getElementById('sidebar').classList.remove('visible');
+        document.getElementById('toc-sidebar')?.classList.remove('visible');
+        document.getElementById('settings-drawer')?.classList.remove('visible');
         break;
       default:
         break;
@@ -801,18 +1058,233 @@ function navigateChapter(delta) {
   updateHistoryProgress();
 }
 
-async function handleFile(file) {
+function cleanDisplayText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function stripExtension(fileName = '') {
+  return cleanDisplayText(fileName).replace(/\.[^.]+$/, '');
+}
+
+function titleKey(value) {
+  return cleanDisplayText(value).toLocaleLowerCase();
+}
+
+function normalizeChapterTitles(chapters, bookName = '') {
+  const bookTitle = titleKey(stripExtension(bookName));
+  const counts = chapters.reduce((acc, chapter) => {
+    const key = titleKey(chapter.title);
+    if (key) {
+      acc[key] = (acc[key] || 0) + 1;
+    }
+    return acc;
+  }, {});
+
+  return chapters.map((chapter, idx) => {
+    const rawTitle = cleanDisplayText(chapter.title);
+    const key = titleKey(rawTitle);
+    const titleLooksLikeBook = bookTitle && key === bookTitle;
+    const titleIsRepeated = key && counts[key] > 1;
+    const title = !rawTitle || titleLooksLikeBook || titleIsRepeated
+      ? `Chapter ${idx + 1}`
+      : rawTitle;
+
+    return {
+      ...chapter,
+      title,
+    };
+  });
+}
+
+function formatBytes(bytes = 0) {
+  if (!bytes) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = bytes;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatLibraryDate(value) {
+  if (!value) return 'Never opened';
+  return new Date(value).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function getLibraryProgressLabel(item) {
+  const chapter = Number.isInteger(item.chapter) ? item.chapter + 1 : 1;
+  return `Ch. ${chapter}`;
+}
+
+function bindLibraryHub() {
+  const trigger = document.getElementById('library-trigger');
+  const overlay = document.getElementById('library-overlay');
+  const closeBtn = document.getElementById('close-library-btn');
+  const clearBtn = document.getElementById('clear-library-btn');
+
+  const close = () => overlay?.classList.remove('visible');
+  const open = async () => {
+    if (AppState.settings.historyEnabled === false) {
+      return;
+    }
+    await renderLibrary();
+    overlay?.classList.add('visible');
+  };
+
+  trigger?.addEventListener('click', open);
+  closeBtn?.addEventListener('click', close);
+  overlay?.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  clearBtn?.addEventListener('click', async () => {
+    if (!confirm('Clear all locally stored History items?')) return;
+    try {
+      await clearLibraryItems();
+      await renderLibrary();
+    } catch (error) {
+      console.error('Failed to clear History.', error);
+      alert('Could not clear History.');
+    }
+  });
+}
+
+async function renderLibrary() {
+  const list = document.getElementById('library-list');
+  const count = document.getElementById('library-count');
+  if (!list || !count) return;
+
+  let items = [];
+  try {
+    items = await getLibraryItems();
+  } catch (error) {
+    console.error('Failed to read History.', error);
+    list.innerHTML = '<div class="empty-library">Could not open History.</div>';
+    count.textContent = '0 items';
+    return;
+  }
+
+  count.textContent = `${items.length} item${items.length === 1 ? '' : 's'}`;
+  if (!items.length) {
+    list.innerHTML = '<div class="empty-library">Your History is empty.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  items.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'library-item';
+    row.dataset.id = item.id;
+
+    const badge = item.kind === 'paste' ? 'Pasted Text' : (item.fileName || '').split('.').pop()?.toUpperCase() || 'File';
+    const detail = item.kind === 'paste'
+      ? `${(item.textContent || '').length.toLocaleString()} chars`
+      : formatBytes(item.size);
+
+    row.innerHTML = `
+      <div class="library-item-main">
+        <div class="library-item-title"></div>
+        <div class="library-item-meta">
+          <span class="library-badge">${badge}</span>
+          <span>${detail}</span>
+          <span>${getLibraryProgressLabel(item)}</span>
+          <span>${formatLibraryDate(item.lastReadAt)}</span>
+        </div>
+      </div>
+      <div class="library-item-actions">
+        <button class="library-open" type="button">Open</button>
+        <button class="library-delete" type="button">Delete</button>
+      </div>
+    `;
+    row.querySelector('.library-item-title').textContent = item.title || item.fileName || 'Untitled';
+    row.querySelector('.library-open').addEventListener('click', () => openLibraryItem(item.id));
+    row.querySelector('.library-delete').addEventListener('click', async () => {
+      try {
+        await deleteLibraryItem(item.id);
+        await renderLibrary();
+      } catch (error) {
+        console.error('Failed to delete History item.', error);
+        alert('Could not delete this History item.');
+      }
+    });
+    row.addEventListener('dblclick', () => openLibraryItem(item.id));
+    list.appendChild(row);
+  });
+}
+
+async function openLibraryItem(id) {
+  const overlay = document.getElementById('library-overlay');
+  let item = null;
+  try {
+    item = await getLibraryItem(id);
+  } catch (error) {
+    console.error('Failed to open History item.', error);
+  }
+
+  if (!item) {
+    alert('This History item could not be found.');
+    await renderLibrary();
+    return;
+  }
+
+  overlay?.classList.remove('visible');
+  suppressLibrarySave = true;
+  AppState.resumeTarget = {
+    libraryId: item.id,
+    fileId: item.fileId || item.id,
+    title: item.title || item.fileName,
+    chapter: item.chapter || 0,
+    scrollTop: item.scrollTop || 0,
+    rsvpIndex: item.rsvpIndex || 0,
+  };
+
+  try {
+    if (item.kind === 'paste') {
+      await handlePastedText(item.textContent || '', item.title || 'Pasted Text', true, { libraryItem: item });
+    } else {
+      const file = new File([item.blob], item.fileName || item.title || 'book', {
+        type: item.mimeType || 'application/octet-stream',
+        lastModified: item.lastModified || Date.now(),
+      });
+      await handleFile(file, { libraryItem: item });
+    }
+  } catch (error) {
+    console.error('Failed to open History item.', error);
+    alert('Could not open this History item.');
+  } finally {
+    suppressLibrarySave = false;
+    scheduleLibraryProgressUpdate(0);
+  }
+}
+
+function escapeHTML(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function handleFile(file, options = {}) {
   clearResources();
   document.getElementById('drop-zone').classList.add('hidden');
   setLoadIndicator(`Loading ${file.name}...`, true);
   const arrayBuffer = await file.arrayBuffer();
 
-  const fileId = makeFileId(file);
-  AppState.book = { name: file.name, fileId };
+  const fileId = options.libraryItem?.fileId || makeFileId(file);
+  const libraryId = options.libraryItem?.id || fileId;
+  AppState.book = { name: file.name, fileId, libraryId, kind: 'file' };
 
   // Persist the FileSystemFileHandle in IndexedDB when available (drag-and-drop
   // or upload via <input> don't give us a handle, so we skip it here).
-  // Handles from the picker are saved in resumeFromHistory.
+  // Uploads and drops do not expose a reusable file handle.
 
   const ext = getFileExtension(file);
   let parsed = { chapters: [], toc: [] };
@@ -843,12 +1315,15 @@ async function handleFile(file) {
     return;
   }
 
-  AppState.chapters = (parsed.chapters || []).map((chapter, idx) => ({
+  const parsedChapters = (parsed.chapters || []).map((chapter, idx) => ({
     title: chapter.title || `Chapter ${idx + 1}`,
     content: chapter.content || '<p></p>',
     originalContent: chapter.originalContent || chapter.content || '<p></p>',
     href: chapter.href || '',
   })).filter((chapter) => (chapter.content || '').trim().length > 0);
+
+  AppState.chapters = normalizeChapterTitles(parsedChapters, file.name);
+  tocCollapsed = window.innerWidth <= 900;
 
   if (!AppState.chapters.length) {
     AppState.chapters = [{
@@ -856,12 +1331,17 @@ async function handleFile(file) {
       content: '<p>No readable content found in this file.</p>',
       originalContent: '<p>No readable content found in this file.</p>',
     }];
+    tocCollapsed = window.innerWidth <= 900;
   }
 
   AppState.toc = parsed.toc || [];
 
-  const resumed = restoreProgress(file.name);
-  if (!resumed) {
+  const libraryItem = options.libraryItem || (AppState.settings.historyEnabled !== false ? await getLibraryItem(libraryId).catch(() => null) : null);
+  const resumed = libraryItem || restoreProgress(file.name);
+  if (libraryItem) {
+    AppState.currentChapter = Number.isInteger(libraryItem.chapter) ? libraryItem.chapter : 0;
+    AppState.rsvp.index = Number.isInteger(libraryItem.rsvpIndex) ? libraryItem.rsvpIndex : 0;
+  } else if (!resumed) {
     AppState.currentChapter = 0;
     AppState.rsvp.index = 0;
   }
@@ -870,7 +1350,37 @@ async function handleFile(file) {
   renderClassicReader();
   updateModeUI();
 
-  // Handle Resume from history — match by fileId first, then fall back to title.
+  if (libraryItem?.scrollTop) {
+    requestAnimationFrame(() => {
+      document.getElementById('reader-area').scrollTop = libraryItem.scrollTop;
+    });
+  }
+
+  if (!suppressLibrarySave && AppState.settings.historyEnabled !== false) {
+    try {
+      await putLibraryItem({
+        ...(libraryItem || {}),
+        id: libraryId,
+        kind: 'file',
+        title: file.name,
+        fileName: file.name,
+        fileId,
+        mimeType: file.type || 'application/octet-stream',
+        size: file.size,
+        lastModified: file.lastModified,
+        blob: file,
+        chapter: AppState.currentChapter,
+        scrollTop: libraryItem?.scrollTop || document.getElementById('reader-area').scrollTop || 0,
+        rsvpIndex: AppState.rsvp.index || 0,
+        lastReadAt: Date.now(),
+      });
+    } catch (error) {
+      console.error('Failed to store file in History.', error);
+      alert('This book is readable now, but it could not be saved to History.');
+    }
+  }
+
+  // Legacy resume target support for older sessions.
   const rt = AppState.resumeTarget;
   if (rt && (rt.fileId === fileId || (!rt.fileId && rt.title === file.name))) {
     if (Number.isInteger(rt.chapter)) {
@@ -890,24 +1400,32 @@ async function handleFile(file) {
 }
 
 function updateHistoryProgress() {
-  if (!AppState.book) return;
+  scheduleLibraryProgressUpdate();
+}
+
+function scheduleLibraryProgressUpdate(delay = 250) {
+  if (!AppState.book?.libraryId || suppressLibrarySave || AppState.settings.historyEnabled === false) return;
+  clearTimeout(libraryProgressTimer);
+  libraryProgressTimer = setTimeout(() => {
+    updateLibraryProgress().catch((error) => {
+      console.warn('Could not update History progress:', error);
+    });
+  }, delay);
+}
+
+async function updateLibraryProgress() {
+  if (!AppState.book?.libraryId || suppressLibrarySave || AppState.settings.historyEnabled === false) return;
+  const item = await getLibraryItem(AppState.book.libraryId);
+  if (!item) return;
 
   const readerArea = document.getElementById('reader-area');
-  const isPaste = (AppState.chapters[0]?.href || '').startsWith('paste://');
-
-  const item = {
-    title: AppState.book.name,
-    fileId: AppState.book.fileId || null,
-    type: isPaste ? 'paste' : 'file',
+  await putLibraryItem({
+    ...item,
     chapter: AppState.currentChapter,
-    scrollTop: readerArea.scrollTop,
-    // Store content for pastes only (cap to avoid localStorage bloat).
-    content: isPaste
-      ? AppState.chapters.map(c => c.originalContent || '').join('\n').slice(0, 200_000)
-      : undefined,
-  };
-
-  addToHistory(item);
+    scrollTop: readerArea?.scrollTop || 0,
+    rsvpIndex: AppState.rsvp.index || 0,
+    lastReadAt: Date.now(),
+  });
 }
 
 function getChapterHTML(index, includeHeading = true) {
@@ -929,21 +1447,22 @@ function getChapterHTML(index, includeHeading = true) {
     return source;
   }
 
-  return `<h2>${chapter.title || `Chapter ${index + 1}`}</h2>${source}`;
+  return `<h2>${escapeHTML(chapter.title || `Chapter ${index + 1}`)}</h2>${source}`;
 }
 
 function renderTOC() {
   const container = document.getElementById('toc-list');
   container.innerHTML = '';
+  syncTOCVisibility();
 
   if (!AppState.chapters.length) {
-    container.innerHTML = '<div style="font-size:0.8rem; color:var(--text-muted);">No chapters loaded.</div>';
     return;
   }
 
   AppState.chapters.forEach((chapter, idx) => {
     const button = document.createElement('button');
     button.className = 'toc-item';
+    button.classList.toggle('active', idx === AppState.currentChapter);
     button.textContent = chapter.title || `Chapter ${idx + 1}`;
     button.addEventListener('click', () => {
       AppState.currentChapter = idx;
@@ -952,9 +1471,13 @@ function renderTOC() {
       if (AppState.mode === 'rsvp') {
         initRSVPMode(getActiveRSVPText());
       }
+      if (window.innerWidth <= 900) {
+        document.getElementById('toc-sidebar')?.classList.remove('visible');
+      }
     });
     container.appendChild(button);
   });
+  syncTOCVisibility();
 }
 
 function renderClassicReader() {
@@ -1010,6 +1533,7 @@ function renderClassicReader() {
   }
 
   updateChapterIndicator();
+  renderTOC();
 }
 
 function getActiveRSVPText() {
@@ -1024,11 +1548,23 @@ function getActiveRSVPText() {
 
 function updateChapterIndicator() {
   const label = document.getElementById('chapter-indicator');
+  const nav = document.getElementById('chapter-nav');
+  const prev = document.getElementById('prev-chapter');
+  const next = document.getElementById('next-chapter');
+  syncTOCVisibility();
+
   if (!AppState.chapters.length) {
     label.textContent = 'No chapter';
+    nav?.classList.add('hidden');
+    if (prev) prev.disabled = true;
+    if (next) next.disabled = true;
     return;
   }
+
   label.textContent = `${AppState.currentChapter + 1} / ${AppState.chapters.length}`;
+  nav?.classList.remove('hidden');
+  if (prev) prev.disabled = AppState.currentChapter <= 0;
+  if (next) next.disabled = AppState.currentChapter >= AppState.chapters.length - 1;
 }
 
 function updateModeUI() {

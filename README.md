@@ -1,6 +1,6 @@
 # ReadRot
 
-ReadRot is a client-side reading app for PDF, EPUB, and text-like formats.
+ReadRot is a client-side reading app for PDF, EPUB, pasted text, and text-like formats.
 
 It runs fully in the browser with no backend.
 
@@ -9,9 +9,12 @@ It runs fully in the browser with no backend.
 ## What it does
 
 - Upload and read: PDF, EPUB, TXT, MD, HTML, XML, JSON, CSV, RTF, and more
+- Add content from one Upload menu: open a file, paste text, or search book sources
 - Reading modes: Classic, Bionic, Speed (RSVP), ROT
 - Reader controls: typography, colors, width, spacing, traversal, chapter mode
-- Progress tracking: chapter and reading position persistence
+- Local History: reopen uploaded files and pasted text from IndexedDB with last read position restored
+- Mobile-friendly UI with collapsible contents, floating chapter navigation, custom themed scrollbars, and optional screen wake lock
+- PWA support for installing ReadRot on mobile/desktop
 - Keyboard shortcuts for playback and navigation
 
 ## Run locally
@@ -50,6 +53,9 @@ Use the Deploy to Cloudflare button above.
 
 ```text
 index.html
+manifest.webmanifest
+service-worker.js
+icons/
 src/
   main.js
   parser/
@@ -62,4 +68,5 @@ src/
 ## Notes
 
 - API keys (Gemini/OpenAI/OpenRouter) are stored in browser storage only.
+- History is local-only and stored in IndexedDB. It can be disabled in Settings.
 - EPUB parsing uses robust fallback logic for compatibility across different EPUB files.

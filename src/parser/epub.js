@@ -102,6 +102,42 @@ function findTocTitle(href, toc) {
   return hit?.label || null;
 }
 
+function cleanTitle(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function titleFromPath(path, fallback) {
+  const leaf = decodeURIComponent(String(path || '').split('/').pop() || '')
+    .replace(/\.(xhtml|html|htm|xml)$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+  return cleanTitle(leaf) || fallback;
+}
+
+function getEpubJsBookTitle(book) {
+  return cleanTitle(
+    book?.packaging?.metadata?.title ||
+    book?.package?.metadata?.title ||
+    book?.metadata?.title ||
+    '',
+  );
+}
+
+function getPackageTitle(opfDoc) {
+  const titleNode = [...opfDoc.getElementsByTagName('*')]
+    .find((node) => (node.localName || '').toLowerCase() === 'title');
+  return cleanTitle(titleNode?.textContent || '');
+}
+
+function isBookTitleRepeat(candidate, bookTitle) {
+  if (!candidate || !bookTitle) {
+    return false;
+  }
+  return candidate.toLocaleLowerCase() === bookTitle.toLocaleLowerCase();
+}
+
 function getSpineItems(book) {
   if (Array.isArray(book?.spine?.items)) {
     return book.spine.items;
@@ -172,6 +208,7 @@ async function parseWithEpubJs(arrayBuffer, onProgress, resources = []) {
   await book.ready;
 
   const toc = flattenToc(book.navigation?.toc || []);
+  const bookTitle = getEpubJsBookTitle(book);
   const chapters = [];
   const spineItems = getSpineItems(book);
 
@@ -188,8 +225,13 @@ async function parseWithEpubJs(arrayBuffer, onProgress, resources = []) {
       const safe = sanitizeHTML(resolved);
 
       if (safe.trim()) {
+        const tocTitle = cleanTitle(findTocTitle(loaded.href, toc));
+        const headingTitle = chapterTitleFromHtml(html, '', bookTitle);
+        const fallbackTitle = titleFromPath(loaded.href || loaded.idref, `Chapter ${chapters.length + 1}`);
         chapters.push({
-          title: findTocTitle(loaded.href, toc) || loaded.idref || `Chapter ${chapters.length + 1}`,
+          title: isBookTitleRepeat(tocTitle, bookTitle)
+            ? (headingTitle || fallbackTitle)
+            : (tocTitle || headingTitle || fallbackTitle),
           content: safe,
           originalContent: safe,
           href: loaded.href,
@@ -257,12 +299,23 @@ function extractBodyHtml(html) {
   return body ? body.innerHTML : html;
 }
 
-function chapterTitleFromHtml(html, fallback) {
+function chapterTitleFromHtml(html, fallback, bookTitle = '') {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
-  const heading = doc.querySelector('h1, h2, h3, title');
-  const text = heading?.textContent?.trim();
-  return text || fallback;
+  const headings = [...doc.querySelectorAll('h1, h2, h3')];
+  for (const heading of headings) {
+    const text = cleanTitle(heading.textContent);
+    if (text && !isBookTitleRepeat(text, bookTitle)) {
+      return text;
+    }
+  }
+
+  const title = cleanTitle(doc.querySelector('title')?.textContent);
+  if (title && !isBookTitleRepeat(title, bookTitle)) {
+    return title;
+  }
+
+  return fallback;
 }
 
 async function parseWithJsZip(arrayBuffer, onProgress, resources = []) {
@@ -291,6 +344,7 @@ async function parseWithJsZip(arrayBuffer, onProgress, resources = []) {
 
   const opfXml = await opfFile.async('text');
   const opfDoc = parseXml(opfXml);
+  const bookTitle = getPackageTitle(opfDoc);
 
   const manifest = {};
   const manifestNodes = [...opfDoc.getElementsByTagName('*')].filter((node) => (node.localName || '').toLowerCase() === 'item');
@@ -344,8 +398,9 @@ async function parseWithJsZip(arrayBuffer, onProgress, resources = []) {
     const safe = sanitizeHTML(resolved);
 
     if (safe.trim()) {
+      const fallbackTitle = titleFromPath(item.href, `Chapter ${chapters.length + 1}`);
       chapters.push({
-        title: chapterTitleFromHtml(html, `Chapter ${chapters.length + 1}`),
+        title: chapterTitleFromHtml(html, fallbackTitle, bookTitle),
         content: safe,
         originalContent: safe,
         href: item.href,

@@ -2,9 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#101010">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="ReadRot">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>ReadRot</title>
-  <link rel="icon" href="data:,">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/readrot.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -54,8 +61,10 @@
       font-family: var(--font-main);
       display: flex;
       height: 100vh;
+      height: 100dvh;
       overflow: hidden;
       -webkit-text-size-adjust: 100%;
+      overscroll-behavior: none;
       transition: background var(--transition), color var(--transition);
     }
 
@@ -85,27 +94,124 @@
       display: flex;
       width: 100%;
       height: 100%;
+      min-height: 100dvh;
       position: relative;
     }
 
-    #sidebar {
+    * {
+      scrollbar-color: color-mix(in srgb, var(--accent) 62%, var(--text-muted)) color-mix(in srgb, var(--surface) 82%, var(--bg));
+      scrollbar-width: thin;
+    }
+
+    *::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    *::-webkit-scrollbar-track {
+      background: color-mix(in srgb, var(--surface) 82%, var(--bg));
+      border-radius: 999px;
+    }
+
+    *::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--accent) 62%, var(--text-muted));
+      border: 2px solid color-mix(in srgb, var(--surface) 82%, var(--bg));
+      border-radius: 999px;
+    }
+
+    *::-webkit-scrollbar-thumb:hover {
+      background: var(--accent);
+    }
+
+    #toc-sidebar {
       width: 320px;
       background: var(--surface);
       border-right: 1px solid var(--border);
-      display: none;
+      display: flex;
       flex-direction: column;
-      overflow-y: auto;
-      padding-bottom: 1rem;
+      overflow: hidden;
       z-index: 30;
     }
 
-    #sidebar.visible {
+    #toc-sidebar.visible {
       display: flex;
+    }
+
+    #toc-toggle {
+      display: none;
+    }
+
+    #toc-toggle.available {
+      display: inline-flex;
+    }
+
+    #settings-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: min(390px, 92vw);
+      height: 100vh;
+      height: 100dvh;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      box-shadow: -18px 0 48px rgba(0, 0, 0, 0.38);
+      display: none;
+      flex-direction: column;
+      overflow-y: auto;
+      z-index: 85;
+    }
+
+    #settings-drawer.visible {
+      display: flex;
+    }
+
+    .drawer-header {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1rem;
+    }
+
+    .drawer-header h3 {
+      margin: 0;
+      font-size: 0.95rem;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--accent);
     }
 
     .panel {
       border-bottom: 1px solid var(--border);
       padding: 1rem;
+    }
+
+    .toc-panel {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #toc-list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding-right: 0.35rem;
+      overscroll-behavior: contain;
+    }
+
+    .settings-panel,
+    #keys-section {
+      flex: 0 0 auto;
+      overflow: visible;
+      padding-bottom: 1rem;
     }
 
     .panel h3 {
@@ -135,6 +241,7 @@
       display: flex;
       flex-direction: column;
       min-width: 0;
+      min-height: 0;
       position: relative;
     }
 
@@ -146,7 +253,44 @@
       gap: 0.5rem;
       background: var(--surface);
       padding: 0.45rem 0.75rem;
+      padding-left: max(0.75rem, env(safe-area-inset-left));
+      padding-right: max(0.75rem, env(safe-area-inset-right));
       flex-wrap: wrap;
+    }
+
+    .upload-menu {
+      position: relative;
+      display: inline-flex;
+    }
+
+    .upload-menu #upload-trigger {
+      width: 100%;
+    }
+
+    .upload-menu-panel {
+      position: absolute;
+      top: calc(100% + 0.35rem);
+      left: 0;
+      z-index: 220;
+      min-width: 150px;
+      padding: 0.35rem;
+      display: grid;
+      gap: 0.3rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 18px 42px rgba(0,0,0,0.4);
+    }
+
+    .upload-menu-panel.hidden {
+      display: none;
+    }
+
+    .upload-menu-panel button {
+      justify-content: flex-start;
+      text-align: left;
+      width: 100%;
+      white-space: nowrap;
     }
 
     #load-indicator {
@@ -177,6 +321,7 @@
       padding: 0.35rem 0.5rem;
       border-radius: var(--radius);
       min-height: 34px;
+      max-width: 100%;
     }
 
     input[type='range'] {
@@ -205,6 +350,13 @@
       color: var(--accent);
     }
 
+    button:disabled {
+      cursor: default;
+      opacity: 0.45;
+      border-color: var(--border);
+      color: var(--text-muted);
+    }
+
     select,
     select option {
       background: var(--surface);
@@ -213,10 +365,13 @@
 
     #reader-area {
       flex: 1;
+      min-height: 0;
       position: relative;
       overflow: auto;
       -webkit-overflow-scrolling: touch;
       background: var(--bg);
+      overscroll-behavior: contain;
+      padding-bottom: 5.5rem;
     }
 
     #reader-area.mode-rsvp {
@@ -252,10 +407,23 @@
       background: rgba(200, 169, 110, 0.07);
     }
 
+    .drop-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.55rem;
+      margin-top: 1rem;
+    }
+
+    .drop-actions button {
+      min-width: 86px;
+      min-height: 42px;
+    }
+
     #classic-reader {
       max-width: var(--reading-width);
       margin: 0 auto;
-      padding: 2rem 1rem 4rem;
+      padding: 2rem 1rem 7rem;
       font-family: var(--font-main);
       font-size: var(--font-size);
       line-height: var(--line-height);
@@ -283,6 +451,12 @@
     #classic-reader a:hover {
       color: #e8c98a;
       text-decoration-color: rgba(232, 201, 138, 0.8);
+    }
+
+    #classic-reader img,
+    #classic-reader video {
+      max-width: 100%;
+      height: auto;
     }
 
     #classic-reader p {
@@ -418,6 +592,52 @@
       text-align: left;
       margin-bottom: 0.4rem;
       font-size: 0.82rem;
+      overflow-wrap: anywhere;
+    }
+
+    .toc-item.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(200, 169, 110, 0.08);
+    }
+
+    #chapter-nav {
+      position: fixed;
+      left: 50%;
+      bottom: max(1rem, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 25;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      width: min(340px, calc(100vw - 2rem));
+      padding: 0.6rem;
+      background: rgba(18, 18, 18, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(10px);
+    }
+
+    #chapter-nav.hidden {
+      display: none;
+    }
+
+    #chapter-nav button {
+      flex: 0 0 74px;
+      min-height: 44px;
+      font-size: 1rem;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    #chapter-indicator {
+      flex: 1;
+      min-width: 0;
+      text-align: center;
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      font-family: var(--font-main);
     }
 
     #mobile-menu-btn {
@@ -431,13 +651,19 @@
     }
 
     @media (max-width: 900px) {
-      #sidebar {
-        position: absolute;
-        height: 100%;
+      #toc-sidebar {
+        position: fixed;
+        height: 100dvh;
         left: 0;
         top: 0;
         box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
         width: min(90vw, 340px);
+        max-width: 100vw;
+        display: none;
+      }
+
+      #toc-sidebar.visible {
+        display: flex;
       }
 
       #mobile-menu-btn {
@@ -446,9 +672,9 @@
 
       #toolbar {
         gap: 0.35rem;
-        padding: 0.45rem;
-        flex-wrap: nowrap;
-        overflow-x: auto;
+        padding: 0.45rem max(0.45rem, env(safe-area-inset-right)) 0.45rem max(0.45rem, env(safe-area-inset-left));
+        flex-wrap: wrap;
+        overflow-x: visible;
         white-space: nowrap;
         scrollbar-width: none;
       }
@@ -458,43 +684,132 @@
       }
 
       #toolbar > * {
-        flex: 0 0 auto;
+        flex: 0 1 auto;
       }
 
       #toolbar button,
       #toolbar select,
       #toolbar input {
         font-size: 16px;
-        min-height: 40px;
+        min-height: 44px;
       }
 
       .logo {
-        width: auto;
+        flex: 1 1 auto;
         margin: 0;
       }
 
-      #chapter-indicator,
+      #settings-btn,
+      #fullscreen-btn {
+        display: none;
+      }
+
+      .upload-menu,
+      #library-trigger,
+      #toc-toggle,
+      #hide-toolbar-btn {
+        flex: 1 1 calc(33.333% - 0.35rem);
+      }
+
+      .mode-switcher {
+        flex: 0 0 112px;
+      }
+
+      .spacer {
+        display: none;
+      }
+
       #load-indicator {
         display: none;
       }
 
+      #chapter-nav #chapter-indicator {
+        display: block;
+      }
+
       #classic-reader {
-        padding: 1.2rem 0.8rem 3.2rem;
+        padding: 1rem max(0.9rem, env(safe-area-inset-right)) max(7rem, env(safe-area-inset-bottom)) max(0.9rem, env(safe-area-inset-left));
+        width: 100%;
+      }
+
+      #classic-reader h1,
+      #classic-reader h2,
+      #classic-reader h3 {
+        overflow-wrap: anywhere;
+      }
+
+      #classic-reader .chapter-panel {
+        padding: 1rem max(0.9rem, env(safe-area-inset-right)) max(7rem, env(safe-area-inset-bottom)) max(0.9rem, env(safe-area-inset-left));
       }
 
       #rsvp-controls,
       #rot-controls {
         justify-content: flex-start;
-        padding: 0.7rem;
+        padding: 0.7rem max(0.7rem, env(safe-area-inset-right)) max(0.7rem, env(safe-area-inset-bottom)) max(0.7rem, env(safe-area-inset-left));
+      }
+
+      #rsvp-controls button,
+      #rot-controls button {
+        min-height: 44px;
       }
 
       #drop-zone {
         inset: 0.75rem;
-        padding: 1.25rem 0.9rem;
+        padding: 1.25rem 0.9rem 6rem;
       }
 
       #restore-toolbar-btn {
         min-height: 40px;
+      }
+
+      #keys-section {
+        max-height: none;
+      }
+    }
+
+    @media (max-width: 560px) {
+      #toc-sidebar {
+        width: 100vw;
+      }
+
+      #toolbar {
+        align-items: stretch;
+      }
+
+      #mobile-menu-btn,
+      .mode-switcher {
+        flex: 1 1 calc(50% - 0.35rem);
+      }
+
+      .logo {
+        flex: 1 1 100%;
+        text-align: center;
+        padding: 0.2rem 0;
+      }
+
+      .upload-menu,
+      #library-trigger,
+      #toc-toggle,
+      #hide-toolbar-btn {
+        flex: 1 1 calc(50% - 0.35rem);
+      }
+
+      .upload-menu-panel {
+        width: 100%;
+      }
+
+      .row-group {
+        grid-template-columns: 1fr;
+      }
+
+      #chapter-nav {
+        width: min(330px, calc(100vw - 1rem));
+        bottom: max(0.5rem, env(safe-area-inset-bottom));
+      }
+
+      #chapter-nav #prev-chapter,
+      #chapter-nav #next-chapter {
+        flex: 0 0 72px;
       }
     }
 
@@ -509,6 +824,7 @@
       align-items: center;
       justify-content: center;
       padding: 2rem;
+      padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
     }
 
     #search-overlay.visible {
@@ -637,13 +953,32 @@
       align-items: center;
       justify-content: center;
       padding: 2rem;
+      padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
     }
 
     #paste-overlay.visible {
       display: flex;
     }
 
-    #paste-container {
+    #library-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 15, 15, 0.85);
+      backdrop-filter: blur(12px);
+      z-index: 200;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+    }
+
+    #library-overlay.visible {
+      display: flex;
+    }
+
+    #paste-container,
+    #library-container {
       width: 100%;
       max-width: 800px;
       background: var(--surface);
@@ -655,15 +990,32 @@
       box-shadow: 0 24px 64px rgba(0,0,0,0.5);
     }
 
-    .paste-header {
+    #library-container {
+      max-width: 760px;
+    }
+
+    .paste-header,
+    .library-header {
       padding: 1.5rem;
       border-bottom: 1px solid var(--border);
     }
 
-    .paste-header h2 {
+    .library-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .paste-header h2,
+    .library-header h2 {
       margin: 0 0 1rem 0;
       color: var(--accent);
       font-family: var(--font-main);
+    }
+
+    .library-header h2 {
+      margin: 0;
     }
 
     #paste-input {
@@ -691,7 +1043,62 @@
       overflow-y: auto;
     }
 
-    .paste-footer {
+    .library-list {
+      padding: 1rem;
+      flex: 1;
+      overflow-y: auto;
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    .library-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 1rem;
+      align-items: center;
+      padding: 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.025);
+    }
+
+    .library-item-title {
+      font-weight: 600;
+      color: var(--text);
+      overflow-wrap: anywhere;
+      margin-bottom: 0.35rem;
+    }
+
+    .library-item-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem 0.75rem;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+
+    .library-badge {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .library-item-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .library-delete {
+      color: var(--danger);
+    }
+
+    .empty-library {
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .paste-footer,
+    .library-footer {
       padding: 1rem 1.5rem;
       border-top: 1px solid var(--border);
       display: flex;
@@ -699,120 +1106,69 @@
       gap: 0.75rem;
     }
 
-    .history-footer {
-      padding: 1rem 1.5rem;
-      border-top: 1px solid var(--border);
-      display: flex;
+    .library-footer {
       justify-content: space-between;
       align-items: center;
     }
 
-    #history-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(15, 15, 15, 0.85);
-      backdrop-filter: blur(12px);
-      z-index: 200;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
-    }
+    @media (max-width: 640px) {
+      #search-container,
+      #paste-container,
+      #library-container {
+        max-height: calc(100dvh - 2rem);
+        border-radius: 6px;
+      }
 
-    #history-overlay.visible {
-      display: flex;
-    }
+      .search-header,
+      .paste-header,
+      .library-header,
+      .search-body,
+      .paste-body,
+      .library-list,
+      .search-footer,
+      .paste-footer,
+      .library-footer {
+        padding: 1rem;
+      }
 
-    #history-container {
-      width: 100%;
-      max-width: 700px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      display: flex;
-      flex-direction: column;
-      max-height: 85vh;
-      box-shadow: 0 24px 64px rgba(0,0,0,0.5);
-    }
+      .search-input-wrapper,
+      .paste-footer {
+        flex-direction: column;
+        align-items: stretch;
+      }
 
-    .history-header {
-      padding: 1.5rem;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
+      .source-grid {
+        grid-template-columns: 1fr;
+      }
 
-    .history-list {
-      padding: 1rem;
-      overflow-y: auto;
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-    }
+      #paste-input {
+        height: 44dvh;
+      }
 
-    .history-item {
-      padding: 1rem;
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-
-    .history-item:hover {
-      background: rgba(255, 255, 255, 0.07);
-      border-color: var(--accent);
-      transform: translateX(4px);
-    }
-
-    .history-item-info {
-      flex: 1;
-    }
-
-    .history-item-title {
-      font-weight: 600;
-      margin-bottom: 0.25rem;
-      color: var(--text);
-    }
-
-    .history-item-meta {
-      font-size: 0.8rem;
-      color: var(--text-muted);
-      display: flex;
-      gap: 1rem;
-    }
-
-    .history-badge {
-      font-size: 0.65rem;
-      padding: 0.1rem 0.4rem;
-      border-radius: 4px;
-      text-transform: uppercase;
-      font-weight: 700;
-    }
-
-    .badge-paste { background: #4a6fa5; color: white; }
-    .badge-file { background: #edae49; color: black; }
-
-    .empty-history {
-      padding: 3rem;
-      text-align: center;
-      color: var(--text-muted);
+      .library-item,
+      .library-item-actions,
+      .library-footer {
+        grid-template-columns: 1fr;
+        flex-direction: column;
+        align-items: stretch;
+      }
     }
   </style>
 </head>
 <body>
   <div id="app">
-    <aside id="sidebar" aria-label="Sidebar">
+    <aside id="toc-sidebar" class="hidden" aria-label="Table of contents">
       <section class="panel toc-panel" id="toc-panel">
         <h3>Table of Contents</h3>
         <div id="toc-list"></div>
       </section>
+    </aside>
 
+    <aside id="settings-drawer" aria-label="Reader settings">
+      <div class="drawer-header">
+        <h3>Settings</h3>
+        <button id="close-settings-btn" title="Close settings">Close</button>
+      </div>
       <section class="panel settings-panel" id="settings-panel">
         <h3>Reader Settings</h3>
 
@@ -907,6 +1263,16 @@
           <input type="checkbox" id="hide-toolbar-setting">
         </div>
 
+        <div class="setting-row inline">
+          <label for="keep-awake-setting">Keep Screen Awake</label>
+          <input type="checkbox" id="keep-awake-setting">
+        </div>
+
+        <div class="setting-row inline">
+          <label for="history-enabled-setting">Enable History</label>
+          <input type="checkbox" id="history-enabled-setting">
+        </div>
+
         <div class="row-group">
           <button id="apply-settings-btn">Apply Settings</button>
           <button id="reset-style-btn">Reset Style</button>
@@ -946,7 +1312,7 @@
 
     <main id="main">
       <header id="toolbar">
-        <button id="mobile-menu-btn" title="Open settings">Menu</button>
+        <button id="mobile-menu-btn" class="hidden" title="Open contents">Contents</button>
         <div class="logo">ReadRot</div>
 
         <select class="mode-switcher" id="mode-switcher" title="Reader mode">
@@ -956,15 +1322,17 @@
           <option value="rot">ROT</option>
         </select>
 
-        <button id="prev-chapter" title="Previous chapter">Prev</button>
-        <span id="chapter-indicator" style="min-width:140px; text-align:center; font-size:0.8rem; color:var(--text-muted);">No chapter</span>
-        <button id="next-chapter" title="Next chapter">Next</button>
-
         <input type="file" id="upload-btn" accept=".pdf,.epub,.txt,.md,.markdown,.mobi,.azw,.azw3,.rtf,.html,.htm,.xml,.json,.log,.csv" style="display:none">
-        <button id="upload-trigger">Upload</button>
-        <button id="search-trigger">Search Hub</button>
-        <button id="paste-trigger">Paste</button>
-        <button id="history-trigger">History</button>
+        <button id="toc-toggle" title="Toggle contents">Contents</button>
+        <div class="upload-menu">
+          <button id="upload-trigger" aria-haspopup="true" aria-expanded="false">Upload</button>
+          <div id="upload-menu" class="upload-menu-panel hidden" role="menu" aria-label="Add content">
+            <button id="upload-file-action" type="button" role="menuitem">Open File</button>
+            <button id="upload-paste-action" type="button" role="menuitem">Paste Text</button>
+            <button id="upload-search-action" type="button" role="menuitem">Search</button>
+          </div>
+        </div>
+        <button id="library-trigger">History</button>
         <button id="settings-btn">Settings</button>
 
         <select id="ai-btn" class="ai-btn hidden" title="Slopify">
@@ -986,12 +1354,22 @@
         <div id="drop-zone" role="button" tabindex="0" aria-label="Tap to choose a file">
           <h2 style="font-family:var(--font-main); margin-bottom:0.25rem;">Drop a book file</h2>
           <p style="margin:0.2rem 0; color:var(--text-muted);">PDF, EPUB, TXT, MD, MOBI, AZW, RTF, HTML, XML, CSV, JSON and more.</p>
-          <p style="margin:0.4rem 0 0; color:var(--text-muted);">Or click Upload in the toolbar.</p>
+          <div class="drop-actions" aria-label="Add content">
+            <button id="drop-upload-trigger">Upload</button>
+            <button id="search-trigger">Search</button>
+            <button id="paste-trigger">Paste</button>
+          </div>
         </div>
 
         <article id="classic-reader"></article>
         <div id="rsvp-reader"><span id="rsvp-word"></span></div>
       </section>
+
+      <nav id="chapter-nav" class="hidden" aria-label="Chapter navigation">
+        <button id="prev-chapter" title="Previous chapter">Prev</button>
+        <span id="chapter-indicator">No chapter</span>
+        <button id="next-chapter" title="Next chapter">Next</button>
+      </nav>
 
       <section id="rsvp-controls">
         <span id="rsvp-status">0 / 0 - 0 min left</span>
@@ -1070,24 +1448,24 @@
     </div>
   </div>
 
-  <div id="history-overlay">
-    <div id="history-container">
-      <div class="history-header">
-        <h2 style="margin:0; font-family:var(--font-main); color:var(--accent);">Reading History</h2>
-        <button id="close-history-btn" class="icon-btn">✕</button>
+  <div id="library-overlay">
+    <div id="library-container">
+      <div class="library-header">
+        <h2>History</h2>
+        <button id="close-library-btn">Close</button>
       </div>
-      <div id="history-list" class="history-list">
-        <!-- History items injected here -->
+      <div id="library-list" class="library-list">
+        <div class="empty-library">Your History is empty.</div>
       </div>
-      <div class="history-footer">
-        <span id="history-count" style="font-size:0.8rem; color:var(--text-muted);">0 items</span>
-        <button id="clear-history-btn" style="background:transparent; color:#e05c4b; border-color:transparent;">Clear All</button>
+      <div class="library-footer">
+        <span id="library-count" style="font-size:0.8rem; color:var(--text-muted);">0 items</span>
+        <button id="clear-library-btn" class="library-delete">Clear All</button>
       </div>
     </div>
   </div>
 
   <button id="restore-toolbar-btn" title="Show top bar">Show Top Bar</button>
 
-  <script type="module" src="src/main.js"></script>
+  <script type="module" src="src/main.js?v=8"></script>
 </body>
 </html>

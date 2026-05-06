@@ -43,6 +43,8 @@ export const AppState = {
     traversalMode: 'scroll',
     chapterMode: 'divided',
     hideToolbar: false,
+    keepAwake: true,
+    historyEnabled: true,
     boldWeight: 600,
     bionicWeight: 700,
   },

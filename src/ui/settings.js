@@ -37,14 +37,6 @@ function bindSettingInput(id, field, parser = (value) => value, onChange) {
   });
 }
 
-function openSidebar() {
-  document.getElementById('sidebar')?.classList.add('visible');
-}
-
-function closeSidebar() {
-  document.getElementById('sidebar')?.classList.remove('visible');
-}
-
 export function initSettings(options = {}) {
   const {
     onVisualChange,
@@ -56,22 +48,29 @@ export function initSettings(options = {}) {
   setApplyButtonState();
 
   const settingsBtn = document.getElementById('settings-btn');
-  const mobileMenuBtn = document.getElementById('mobile-menu-btn');
-  const sidebar = document.getElementById('sidebar');
+  const closeSettingsBtn = document.getElementById('close-settings-btn');
+  const tocSidebar = document.getElementById('toc-sidebar');
+  const settingsDrawer = document.getElementById('settings-drawer');
 
-  const toggleSidebar = () => sidebar.classList.toggle('visible');
-  settingsBtn?.addEventListener('click', toggleSidebar);
-  mobileMenuBtn?.addEventListener('click', toggleSidebar);
+  settingsBtn?.addEventListener('click', () => {
+    settingsDrawer?.classList.toggle('visible');
+    if (window.innerWidth <= 900) {
+      tocSidebar?.classList.remove('visible');
+    }
+  });
+
+  closeSettingsBtn?.addEventListener('click', () => {
+    settingsDrawer?.classList.remove('visible');
+  });
 
   document.addEventListener('click', (e) => {
-    if (window.innerWidth > 900) {
-      return;
-    }
-    if (!sidebar.classList.contains('visible')) {
-      return;
-    }
-    if (!sidebar.contains(e.target) && e.target.id !== 'settings-btn' && e.target.id !== 'mobile-menu-btn') {
-      closeSidebar();
+    const target = e.target;
+    const clickedSettingsButton = target.closest?.('#settings-btn');
+
+    if (settingsDrawer?.classList.contains('visible')) {
+      if (!settingsDrawer.contains(target) && !clickedSettingsButton) {
+        settingsDrawer.classList.remove('visible');
+      }
     }
   });
 
@@ -88,6 +87,8 @@ export function initSettings(options = {}) {
   bindSettingInput('bg-color', 'readerBg', (v) => v, onVisualChange);
   bindSettingInput('accent-color', 'accentColor', (v) => v, onVisualChange);
   bindSettingInput('hide-toolbar-setting', 'hideToolbar', (v) => Boolean(v), onVisualChange);
+  bindSettingInput('keep-awake-setting', 'keepAwake', (v) => Boolean(v), options.onKeepAwakeChange);
+  bindSettingInput('history-enabled-setting', 'historyEnabled', (v) => Boolean(v), options.onHistoryChange);
 
   bindSettingInput('traversal-mode', 'traversalMode', (v) => v, onTraversalChange);
   bindSettingInput('chapter-mode', 'chapterMode', (v) => v, onTraversalChange);
@@ -115,15 +116,22 @@ export function initSettings(options = {}) {
       boldWeight: 600,
       bionicWeight: 700,
       hideToolbar: false,
+      keepAwake: true,
+      historyEnabled: true,
     });
 
-    ['theme-select', 'font-family', 'font-size', 'line-height', 'reading-width', 'letter-spacing', 'paragraph-spacing', 'bold-weight', 'bionic-weight', 'font-color', 'bg-color', 'accent-color'].forEach((id) => {
+    ['theme-select', 'font-family', 'font-size', 'line-height', 'reading-width', 'letter-spacing', 'paragraph-spacing', 'bold-weight', 'bionic-weight', 'font-color', 'bg-color', 'accent-color', 'hide-toolbar-setting', 'keep-awake-setting', 'history-enabled-setting'].forEach((id) => {
       const el = document.getElementById(id);
       if (!el) {
         return;
       }
       if (el.type === 'checkbox') {
-        el.checked = !!AppState.settings.hideToolbar;
+        const checkboxMap = {
+          'hide-toolbar-setting': AppState.settings.hideToolbar,
+          'keep-awake-setting': AppState.settings.keepAwake,
+          'history-enabled-setting': AppState.settings.historyEnabled,
+        };
+        el.checked = !!checkboxMap[id];
       } else {
         const map = {
           'theme-select': AppState.settings.theme,
@@ -144,10 +152,14 @@ export function initSettings(options = {}) {
     });
 
     document.getElementById('hide-toolbar-setting').checked = false;
+    document.getElementById('keep-awake-setting').checked = true;
+    document.getElementById('history-enabled-setting').checked = true;
     applySettingsToDOM();
     settingsDirty = true;
     setApplyButtonState();
     onVisualChange?.();
+    options.onKeepAwakeChange?.();
+    options.onHistoryChange?.();
   });
 
   document.getElementById('fullscreen-btn-setting')?.addEventListener('click', () => onFullscreen?.());
