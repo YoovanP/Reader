@@ -3,6 +3,10 @@ import { AppState, applySettingsToDOM, saveSettings } from '../utils/storage.js'
 
 let settingsDirty = false;
 
+function isCompactLayout() {
+  return window.matchMedia('(max-width: 900px), (orientation: portrait)').matches;
+}
+
 function setApplyButtonState() {
   const applyBtn = document.getElementById('apply-settings-btn');
   if (!applyBtn) {
@@ -54,7 +58,7 @@ export function initSettings(options = {}) {
 
   settingsBtn?.addEventListener('click', () => {
     settingsDrawer?.classList.toggle('visible');
-    if (window.innerWidth <= 900) {
+    if (isCompactLayout()) {
       tocSidebar?.classList.remove('visible');
     }
   });

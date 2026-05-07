@@ -29,6 +29,9 @@ import { SourceManager } from './sources/manager.js';
 
 let wakeLock = null;
 let tocCollapsed = true;
+let pagedTouchStartX = 0;
+let pagedTouchStartY = 0;
+let pagedSnapTimer = null;
 let libraryProgressTimer = null;
 let suppressLibrarySave = false;
 
@@ -199,6 +202,10 @@ function getFileExtension(file) {
   return '';
 }
 
+function isCompactLayout() {
+  return window.matchMedia('(max-width: 900px), (orientation: portrait)').matches;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initStorage();
   AppState.ai.provider = localStorage.getItem('readrot-ai-provider') || AppState.ai.provider;
@@ -227,11 +234,13 @@ document.addEventListener('DOMContentLoaded', () => {
   bindDropZone();
   bindKeyboardShortcuts();
   bindScrollProgress();
+  bindPagedTraversal();
   bindSearchHub();
   bindIntralinks();
   bindPasteHub();
   bindLibraryHub();
   bindWakeLockLifecycle();
+  window.addEventListener('resize', syncTOCVisibility);
 
   const modeSwitcher = document.getElementById('mode-switcher');
   modeSwitcher.addEventListener('change', (e) => {
@@ -362,7 +371,7 @@ function bindToolbar() {
   });
 
   document.addEventListener('click', (e) => {
-    if (window.innerWidth > 900 || tocCollapsed) {
+    if (!isCompactLayout() || tocCollapsed) {
       return;
     }
     const target = e.target;
@@ -447,11 +456,17 @@ function syncTOCVisibility() {
   const sidebar = document.getElementById('toc-sidebar');
   const desktopToggle = document.getElementById('toc-toggle');
   const mobileToggle = document.getElementById('mobile-menu-btn');
+  const mobileArrow = tocCollapsed ? '›' : '‹';
 
   desktopToggle?.classList.toggle('available', hasChapters);
   desktopToggle?.classList.toggle('active', hasChapters && !tocCollapsed);
   mobileToggle?.classList.toggle('hidden', !hasChapters);
   mobileToggle?.classList.toggle('active', hasChapters && !tocCollapsed);
+  if (mobileToggle) {
+    mobileToggle.textContent = isCompactLayout() ? mobileArrow : 'Contents';
+    mobileToggle.setAttribute('aria-label', tocCollapsed ? 'Open contents' : 'Close contents');
+    mobileToggle.title = tocCollapsed ? 'Open contents' : 'Close contents';
+  }
 
   if (!hasChapters || tocCollapsed) {
     sidebar?.classList.add('hidden');
@@ -657,7 +672,7 @@ async function handlePastedText(text, title, isResume = false, options = {}) {
   AppState.chapters = [chapter];
   AppState.currentChapter = Number.isInteger(options.libraryItem?.chapter) ? options.libraryItem.chapter : 0;
   AppState.rsvp.index = Number.isInteger(options.libraryItem?.rsvpIndex) ? options.libraryItem.rsvpIndex : 0;
-  tocCollapsed = window.innerWidth <= 900;
+  tocCollapsed = isCompactLayout();
   
   saveReaderState();
   renderClassicReader();
@@ -961,7 +976,10 @@ function bindScrollProgress() {
 function bindKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
     const tag = e.target?.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+    if (tag === 'INPUT' || tag === 'TEXTAREA') {
+      return;
+    }
+    if (tag === 'SELECT' && !['ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
       return;
     }
 
@@ -971,6 +989,7 @@ function bindKeyboardShortcuts() {
         togglePlayPause();
         break;
       case 'ArrowRight':
+        e.preventDefault();
         if (AppState.mode === 'rsvp') {
           skipForward(10);
         } else {
@@ -978,6 +997,7 @@ function bindKeyboardShortcuts() {
         }
         break;
       case 'ArrowLeft':
+        e.preventDefault();
         if (AppState.mode === 'rsvp') {
           skipBackward(10);
         } else {
@@ -985,9 +1005,11 @@ function bindKeyboardShortcuts() {
         }
         break;
       case 'ArrowUp':
+        e.preventDefault();
         increaseWPM(25);
         break;
       case 'ArrowDown':
+        e.preventDefault();
         decreaseWPM(25);
         break;
       case 'r': {
@@ -1026,6 +1048,9 @@ function bindKeyboardShortcuts() {
 }
 
 function navigateByArrow(direction) {
+  if (AppState.settings.traversalMode !== 'scroll' && pageHorizontal(direction)) {
+    return;
+  }
   const isRTL = AppState.settings.traversalMode === 'rtl';
   const delta = direction === 'right' ? (isRTL ? -1 : 1) : (isRTL ? 1 : -1);
   navigateChapter(delta);
@@ -1056,6 +1081,83 @@ function navigateChapter(delta) {
     initRSVPMode(getActiveRSVPText());
   }
   updateHistoryProgress();
+}
+
+function getPagedPanel() {
+  if (AppState.settings.traversalMode === 'scroll') {
+    return null;
+  }
+  return document.querySelector('#classic-reader.horizontal .chapter-panel');
+}
+
+function pageHorizontal(direction) {
+  const panel = getPagedPanel();
+  if (!panel) {
+    return false;
+  }
+
+  const isRTL = AppState.settings.traversalMode === 'rtl';
+  const pageWidth = Math.max(1, panel.clientWidth);
+  const maxScroll = Math.max(0, panel.scrollWidth - panel.clientWidth);
+  const visualForward = direction === 'right';
+  const sign = visualForward === !isRTL ? 1 : -1;
+  const nextLeft = Math.max(0, Math.min(maxScroll, panel.scrollLeft + sign * pageWidth));
+
+  if (Math.abs(nextLeft - panel.scrollLeft) > 2) {
+    panel.scrollTo({ left: nextLeft, behavior: 'smooth' });
+    schedulePagedSnap(panel, 45);
+    updateHistoryProgress();
+    return true;
+  }
+
+  navigateChapter(sign > 0 ? 1 : -1);
+  return true;
+}
+
+function snapPagedPanel(panel = getPagedPanel()) {
+  if (!panel || AppState.settings.traversalMode === 'scroll') {
+    return;
+  }
+  const pageWidth = Math.max(1, panel.clientWidth);
+  const maxScroll = Math.max(0, panel.scrollWidth - panel.clientWidth);
+  const snapLeft = Math.max(0, Math.min(maxScroll, Math.round(panel.scrollLeft / pageWidth) * pageWidth));
+  if (Math.abs(snapLeft - panel.scrollLeft) > 2) {
+    panel.scrollTo({ left: snapLeft, behavior: 'smooth' });
+  }
+}
+
+function schedulePagedSnap(panel = getPagedPanel(), delay = 45) {
+  clearTimeout(pagedSnapTimer);
+  pagedSnapTimer = setTimeout(() => snapPagedPanel(panel), delay);
+}
+
+function bindPagedTraversal() {
+  const readerArea = document.getElementById('reader-area');
+  readerArea.addEventListener('scroll', () => {
+    schedulePagedSnap();
+  }, { passive: true });
+
+  readerArea.addEventListener('touchstart', (event) => {
+    if (AppState.settings.traversalMode === 'scroll' || event.touches.length !== 1) {
+      return;
+    }
+    pagedTouchStartX = event.touches[0].clientX;
+    pagedTouchStartY = event.touches[0].clientY;
+  }, { passive: true });
+
+  readerArea.addEventListener('touchend', (event) => {
+    if (AppState.settings.traversalMode === 'scroll' || !event.changedTouches.length) {
+      return;
+    }
+    const touch = event.changedTouches[0];
+    const dx = touch.clientX - pagedTouchStartX;
+    const dy = touch.clientY - pagedTouchStartY;
+    if (Math.abs(dx) < 42 || Math.abs(dx) < Math.abs(dy) * 1.25) {
+      schedulePagedSnap(undefined, 30);
+      return;
+    }
+    pageHorizontal(dx < 0 ? 'right' : 'left');
+  }, { passive: true });
 }
 
 function cleanDisplayText(value) {
@@ -1323,7 +1425,7 @@ async function handleFile(file, options = {}) {
   })).filter((chapter) => (chapter.content || '').trim().length > 0);
 
   AppState.chapters = normalizeChapterTitles(parsedChapters, file.name);
-  tocCollapsed = window.innerWidth <= 900;
+  tocCollapsed = isCompactLayout();
 
   if (!AppState.chapters.length) {
     AppState.chapters = [{
@@ -1331,7 +1433,7 @@ async function handleFile(file, options = {}) {
       content: '<p>No readable content found in this file.</p>',
       originalContent: '<p>No readable content found in this file.</p>',
     }];
-    tocCollapsed = window.innerWidth <= 900;
+    tocCollapsed = isCompactLayout();
   }
 
   AppState.toc = parsed.toc || [];
@@ -1471,7 +1573,7 @@ function renderTOC() {
       if (AppState.mode === 'rsvp') {
         initRSVPMode(getActiveRSVPText());
       }
-      if (window.innerWidth <= 900) {
+      if (isCompactLayout()) {
         document.getElementById('toc-sidebar')?.classList.remove('visible');
       }
     });
@@ -1494,11 +1596,11 @@ function renderClassicReader() {
   const chapterMode = AppState.settings.chapterMode;
 
   classic.classList.remove('horizontal', 'rtl');
+  readerArea.classList.toggle('paged', traversal !== 'scroll');
 
   if (traversal === 'scroll') {
-    const indices = chapterMode === 'continuous'
-      ? AppState.chapters.map((_, idx) => idx)
-      : [AppState.currentChapter];
+    readerArea.scrollTop = 0;
+    const indices = [AppState.currentChapter];
 
     classic.innerHTML = indices.map((idx) => {
       const body = getChapterHTML(idx, chapterMode === 'continuous');
@@ -1510,6 +1612,7 @@ function renderClassicReader() {
       readerArea.scrollTop = stored;
     }
   } else {
+    readerArea.scrollTop = 0;
     classic.classList.add('horizontal');
     if (traversal === 'rtl') {
       classic.classList.add('rtl');
@@ -1524,12 +1627,13 @@ function renderClassicReader() {
       return `<section class="chapter-panel" id="chapter-panel-${idx}">${content}</section>`;
     }).join('');
 
-    if (chapterMode === 'continuous') {
-      requestAnimationFrame(() => {
-        const panel = document.getElementById(`chapter-panel-${AppState.currentChapter}`);
-        panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
-      });
-    }
+    requestAnimationFrame(() => {
+      const panel = getPagedPanel();
+      if (panel) {
+        panel.scrollLeft = 0;
+        panel.onscroll = () => schedulePagedSnap(panel);
+      }
+    });
   }
 
   updateChapterIndicator();
@@ -1561,6 +1665,11 @@ function updateChapterIndicator() {
     return;
   }
 
+  if (AppState.mode === 'rsvp') {
+    nav?.classList.add('hidden');
+    return;
+  }
+
   label.textContent = `${AppState.currentChapter + 1} / ${AppState.chapters.length}`;
   nav?.classList.remove('hidden');
   if (prev) prev.disabled = AppState.currentChapter <= 0;
@@ -1582,6 +1691,7 @@ function updateModeUI() {
 
   document.getElementById('drop-zone').classList.toggle('hidden', hasBook);
   document.getElementById('reader-area').classList.toggle('mode-rsvp', AppState.mode === 'rsvp');
+  document.getElementById('chapter-nav')?.classList.toggle('hidden', AppState.mode === 'rsvp' || !hasBook);
 
   const showClassic = AppState.mode === 'classic' || AppState.mode === 'rot' || AppState.mode === 'bionic';
   classicReader.style.display = showClassic ? 'block' : 'none';
